@@ -1,0 +1,19 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Generated files
+downloads/
+logs/
+*.log
+
+# Backup files
+*.bak
+
+# OS files
+.DS_Store
+
+# Environment variables
+.env
+.env.local

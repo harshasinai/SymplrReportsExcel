@@ -1,0 +1,9 @@
+# Sample environment variables for the hire report automation
+# Copy to ~/.hire_report_env and edit values (do NOT commit real creds)
+
+HIRE_URL="https://pm.healthcaresource.com/PM/PMWeb/ManageReports?isMenuNavigation=true"
+HIRE_USER="your_username"
+HIRE_PASS="your_password"
+DOWNLOAD_DIR="/Users/Harsha/Documents/myapp/downloads"
+# Set HEADLESS=0 for interactive debugging
+HEADLESS=1
