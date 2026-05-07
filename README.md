@@ -1,53 +1,98 @@
-# Hires Report Automation
+# Hire Report Automation - Windows VM
 
-This project contains a Playwright script to automatically download the "Hires Report" CSV from your application.
+This project automates downloading hire reports from Symplr Recruiting using Playwright and runs on a Windows VM with Task Scheduler.
 
-Files added:
-- `scripts/download_hire_report.py` - main automation script
-- `requirements.txt` - Python dependencies
-- `.hire_report_env.sample` - sample environment variables
+## Features
+- ✅ Automated login to Symplr Recruiting
+- ✅ Downloads UAFCompare1 reports as CSV
+- ✅ Runs on schedule via Windows Task Scheduler
+- ✅ Includes retry logic and error handling
+- ✅ Generates debug screenshots on failures
+- ✅ **Cost: FREE** (uses your existing Windows VM)
 
-Quick setup
+## Quick Start (Windows VM)
 
-1. Create a Python venv and install deps:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install
+### 1. Initial Setup
+```cmd
+# Copy project to Windows VM (e.g., C:\hire-report-automation\)
+# Open Command Prompt as Administrator
+cd C:\hire-report-automation
+setup_windows.bat
 ```
 
-2. Copy env sample to your home and edit credentials:
-```bash
-cp .hire_report_env.sample ~/.hire_report_env
-# edit ~/.hire_report_env and set HIRE_USER and HIRE_PASS
+### 2. Configure Credentials
+Set environment variables in Windows:
+- Right-click **This PC** → **Properties** → **Advanced system settings**
+- **Environment Variables** → **New** (System variables)
+- `HIRE_USER` = `sa-powerapps`
+- `HIRE_PASS` = `passwd`
+
+### 3. Test Manually
+```cmd
+run_hire_report.bat
 ```
 
-3. Run the script manually to test:
-```bash
-source .venv/bin/activate
-python scripts/download_hire_report.py
+### 4. Set Up Daily Automation
+- Open Task Scheduler (`taskschd.msc`)
+- Create new task → Point to `C:\hire-report-automation\run_hire_report.bat`
+- Schedule for daily execution (e.g., 6:00 AM)
+
+## File Structure
+```
+C:\hire-report-automation\
+├── scripts\
+│   └── download_hire_report.py    # Main automation script
+├── downloads\                     # CSV output folder
+├── logs\                          # Log files
+├── run_hire_report.bat            # Windows batch runner
+├── setup_windows.bat              # Initial setup script
+├── requirements.txt               # Python dependencies
+├── WINDOWS_SETUP.md               # Detailed setup guide
+└── hire_report.log                # Execution logs
 ```
 
-## Run Manually On-The-Fly
+## Manual Testing
 
-If you need to download the report right now (any time of day), use this command:
-
-### Quick One-Line Command
-```bash
-cd /Users/Harsha/Documents/myapp && source .venv/bin/activate && python scripts/download_hire_report.py
+### Run Immediately (Any Time)
+```cmd
+cd C:\hire-report-automation
+run_hire_report.bat
 ```
 
-### Or Step-by-Step
-```bash
-# Navigate to project folder
-cd /Users/Harsha/Documents/myapp
+### Check Results
+- CSV files: `downloads\` folder
+- Logs: `hire_report.log`
+- Screenshots: `downloads\screenshots\` (on errors)
 
-# Activate virtual environment
-source .venv/bin/activate
+## Troubleshooting
 
-# Run the script
-python scripts/download_hire_report.py
+### Script Won't Run
+- Check `hire_report.log` for error messages
+- Verify environment variables are set
+- Test: `python scripts\download_hire_report.py` directly
+
+### Task Scheduler Issues
+- Right-click task → **Run** to test manually
+- Check **History** tab for execution details
+- Verify **Run with highest privileges** is enabled
+
+### Browser Issues
+- Reinstall browsers: `playwright install chromium`
+- Check internet connectivity
+
+## Maintenance
+- Monitor disk space (CSV files accumulate)
+- Review logs weekly
+- Update dependencies quarterly
+
+## Security
+- Credentials stored in Windows environment variables
+- Task runs with administrator privileges
+- Keep VM updated with security patches
+
+---
+
+**Detailed Setup**: See [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for step-by-step instructions.
 ```
 
 **What to expect:**
