@@ -92,6 +92,32 @@ EXPECTED_LAYOUT_COLUMNS = [
 OUTPUT_FILE_PREFIX = "SymplrHireList"
 
 
+def browser_launch_options(headless: bool) -> dict:
+    """Return Playwright launch options, preferring installed Chrome/Edge on Windows."""
+    options = {"headless": headless, "slow_mo": 80}
+
+    env_path = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE") or os.environ.get("CHROME_EXECUTABLE")
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path))
+
+    if os.name == "nt":
+        candidates.extend([
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft/Edge/Application/msedge.exe",
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft/Edge/Application/msedge.exe",
+        ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            options["executable_path"] = str(candidate)
+            logging.info(f"Using browser executable: {candidate}")
+            break
+
+    return options
+
+
 def build_output_filename(now: Optional[datetime.datetime] = None) -> str:
     """Return the standard output CSV name using a 24-hour timestamp."""
     now = now or datetime.datetime.now()
@@ -718,7 +744,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
     print(f"    Headless   : {headless}\n")
 
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=headless, slow_mo=80)
+    browser = pw.chromium.launch(**browser_launch_options(headless))
     ctx = browser.new_context(
         accept_downloads=True,
         viewport={'width': 1280, 'height': 720}
