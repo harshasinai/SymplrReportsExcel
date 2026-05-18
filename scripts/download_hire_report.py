@@ -93,9 +93,10 @@ OUTPUT_FILE_PREFIX = "SymplrHireList"
 
 
 def build_output_filename(now: Optional[datetime.datetime] = None) -> str:
-    """Return the standard output CSV name: SymplrHireList_MMDDYYYY_HH:MM.csv."""
+    """Return the standard output CSV name using a 24-hour timestamp."""
     now = now or datetime.datetime.now()
-    return f"{OUTPUT_FILE_PREFIX}_{now.strftime('%m%d%Y_%H:%M')}.csv"
+    time_format = "%H%M" if os.name == "nt" else "%H:%M"
+    return f"{OUTPUT_FILE_PREFIX}_{now.strftime('%m%d%Y')}_{now.strftime(time_format)}.csv"
 
 
 def unique_output_path(out_dir: Path, filename: str) -> Path:
