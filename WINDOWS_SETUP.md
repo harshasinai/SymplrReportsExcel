@@ -35,6 +35,15 @@ This will:
 
 ## Step 2: Configure Environment Variables
 
+The Windows runner now includes the Symplr automation credentials for Task Scheduler:
+
+```batch
+set "HIRE_USER=sa-powerapps"
+set "HIRE_PASS=Digital1500"
+```
+
+That means `run_hire_report.bat` can run directly from Task Scheduler. If the password changes, update `run_hire_report.bat` or use the System Environment Variables option below.
+
 ### Option A: System Environment Variables (Recommended)
 1. Right-click **This PC** → **Properties**
 2. Click **Advanced system settings**
@@ -49,11 +58,10 @@ This will:
 | `DOWNLOAD_DIR` | `C:\hire-report-automation\downloads` (optional) |
 
 ### Option B: Set in Batch File
-Edit `run_hire_report.bat` and uncomment/modify these lines:
+This is already configured in `run_hire_report.bat`:
 ```batch
-REM Set credentials (uncomment and modify)
-REM set HIRE_USER=sa-powerapps
-REM set HIRE_PASS=Digital1500
+set "HIRE_USER=sa-powerapps"
+set "HIRE_PASS=Digital1500"
 ```
 
 ---
@@ -73,7 +81,7 @@ Hire Report Download - Windows VM
 =======================================
 Starting hire report download...
 ✅  Download complete!
-    File : C:\hire-report-automation\downloads\Current_Layout-CSV_20260506_153522.csv
+    File : C:\hire-report-automation\downloads\SymplrHireList_05062026_22:00.csv
 =======================================
 SUCCESS: Hire report downloaded!
 =======================================

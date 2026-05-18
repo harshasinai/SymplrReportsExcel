@@ -24,8 +24,8 @@ setup_windows.bat
 Set environment variables in Windows:
 - Right-click **This PC** → **Properties** → **Advanced system settings**
 - **Environment Variables** → **New** (System variables)
-- `HIRE_USER` = `sa-powerapps`
-- `HIRE_PASS` = `passwd`
+- `HIRE_USER` = your Symplr automation username
+- `HIRE_PASS` = your Symplr automation password
 
 ### 3. Test Manually
 ```cmd
@@ -97,7 +97,7 @@ run_hire_report.bat
 
 **What to expect:**
 - You'll see messages like `✓ Login successful`, `✓ Export Report dialog opened`, etc.
-- When you see `✓ CSV saved to: /Users/Harsha/Documents/myapp/downloads/hire_report_YYYYMMDD_HHMMSS.csv` - the download is complete!
+- When you see `✓ CSV saved to: /Users/Harsha/Documents/myapp/downloads/SymplrHireList_MMDDYYYY_HH:MM.csv` - the download is complete!
 - The CSV file is ready in the downloads folder
 
 **Verify the download:**

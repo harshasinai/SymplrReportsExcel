@@ -19,7 +19,12 @@ if not exist ".venv\Scripts\activate.bat" (
 REM Activate virtual environment
 call .venv\Scripts\activate.bat
 
-REM Set environment variables (you can also set these system-wide)
+REM Symplr credentials for Windows VM / Task Scheduler runs.
+REM You can also set these as Windows System Environment Variables instead.
+if "%HIRE_USER%"=="" set "HIRE_USER=sa-powerapps"
+if "%HIRE_PASS%"=="" set "HIRE_PASS=Digital1500"
+
+REM Confirm required environment variables are available.
 if "%HIRE_USER%"=="" (
     echo ERROR: HIRE_USER environment variable not set.
     echo Set it in System Properties ^> Environment Variables

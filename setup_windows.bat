@@ -55,8 +55,11 @@ echo Next steps:
 echo 1. Set environment variables in Windows:
 echo    - Right-click This PC ^> Properties ^> Advanced system settings
 echo    - Environment Variables ^> New (System or User variables)
-echo    - HIRE_USER = your_username
-echo    - HIRE_PASS = your_password
+echo    - HIRE_USER = sa-powerapps
+echo    - HIRE_PASS = Digital1500
+echo.
+echo    Note: run_hire_report.bat already includes these values for
+echo    Task Scheduler runs. Update that file if the password changes.
 echo.
 echo 2. Test the script: run_hire_report.bat
 echo.

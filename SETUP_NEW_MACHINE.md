@@ -202,7 +202,7 @@ Logging in...
 ✓ Export Report dialog opened
 Selecting CSV format...
 Waiting for download to complete...
-✓ CSV saved to: /Users/YourUsername/Documents/myapp/downloads/hire_report_20251205_120000.csv
+✓ CSV saved to: /Users/YourUsername/Documents/myapp/downloads/SymplrHireList_12052025_22:00.csv
 ```
 
 If successful, verify the CSV was created:
@@ -306,7 +306,7 @@ myapp/
 ├── logs/
 │   └── hire_report_cron.log (created after first run)
 ├── downloads/
-│   └── hire_report_20251205_*.csv (created after each run)
+│   └── SymplrHireList_12052025_*.csv (created after each run)
 ├── .venv/
 │   ├── bin/ (macOS/Linux) or Scripts/ (Windows)
 │   └── lib/

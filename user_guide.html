@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Symplr UAFCompare1 Automation Guide</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #5b6673;
+      --line: #d7dde5;
+      --panel: #ffffff;
+      --soft: #f5f7fa;
+      --accent: #1268a8;
+      --accent-dark: #0f5487;
+      --ok: #137a4b;
+      --warn: #a15c07;
+      --shadow: 0 10px 28px rgba(31, 41, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+      background: var(--soft);
+      line-height: 1.5;
+    }
+
+    header {
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+      padding: 28px 32px;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      max-width: 860px;
+    }
+
+    main {
+      padding: 24px 32px 40px;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      min-height: 92px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .metric span {
+      display: block;
+      font-size: 18px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .metric.ok span {
+      color: var(--ok);
+    }
+
+    .tabs {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .tab-list {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      background: #eef2f6;
+    }
+
+    .tab-button {
+      appearance: none;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      min-width: 154px;
+      padding: 14px 18px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .tab-button:hover {
+      background: #e2e9f0;
+    }
+
+    .tab-button[aria-selected="true"] {
+      background: var(--panel);
+      color: var(--accent);
+      box-shadow: inset 0 3px 0 var(--accent);
+    }
+
+    .tab-panel {
+      display: none;
+      padding: 26px;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(160px, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+      min-height: 145px;
+    }
+
+    .step b {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .check {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 14px 16px;
+    }
+
+    .check strong {
+      display: block;
+      color: var(--ok);
+      margin-bottom: 4px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      min-width: 760px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef2f6;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      background: #eef2f6;
+      border: 1px solid #dce3eb;
+      border-radius: 5px;
+      padding: 2px 5px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 0.95em;
+    }
+
+    pre {
+      background: #18212b;
+      color: #f8fafc;
+      border-radius: 8px;
+      overflow-x: auto;
+      padding: 16px;
+      margin: 14px 0 0;
+      font-size: 14px;
+    }
+
+    a {
+      color: var(--accent-dark);
+      font-weight: 700;
+    }
+
+    .note {
+      border-left: 4px solid var(--accent);
+      background: #eef7ff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-top: 16px;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff6e9;
+    }
+
+    @media (max-width: 980px) {
+      .status-strip,
+      .flow,
+      .checklist {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      header,
+      main {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+
+      h1 {
+        font-size: 25px;
+      }
+
+      .status-strip,
+      .flow,
+      .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      .tab-panel {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Symplr UAFCompare1 Automation Guide</h1>
+      <p class="subtitle">A simple confirmation guide for how the automation creates the exact Current Layout CSV, how to verify it, and which output files were generated successfully.</p>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="status-strip" aria-label="Current automation status">
+        <div class="metric ok">
+          <strong>Status</strong>
+          <span>Working</span>
+        </div>
+        <div class="metric">
+          <strong>Report</strong>
+          <span>UAFCompare1</span>
+        </div>
+        <div class="metric">
+          <strong>Export Type</strong>
+          <span>Current Layout CSV</span>
+        </div>
+        <div class="metric ok">
+          <strong>Latest Test</strong>
+          <span>05/11/2026 passed</span>
+        </div>
+      </section>
+
+      <section class="tabs">
+        <div class="tab-list" role="tablist" aria-label="Guide sections">
+          <button class="tab-button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
+          <button class="tab-button" role="tab" id="tab-process" aria-controls="panel-process" aria-selected="false">Process</button>
+          <button class="tab-button" role="tab" id="tab-validation" aria-controls="panel-validation" aria-selected="false">Validation</button>
+          <button class="tab-button" role="tab" id="tab-outputs" aria-controls="panel-outputs" aria-selected="false">Outputs</button>
+          <button class="tab-button" role="tab" id="tab-repo" aria-controls="panel-repo" aria-selected="false">Repo Details</button>
+          <button class="tab-button" role="tab" id="tab-runbook" aria-controls="panel-runbook" aria-selected="false">Runbook</button>
+        </div>
+
+        <section class="tab-panel active" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+          <h2>What This Automation Does</h2>
+          <p>The script logs into Symplr Recruiting, opens the <code>UAFCompare1</code> report, selects a requested date range, runs the report, and downloads the official <code>Current Layout</code> CSV from the export panel.</p>
+          <p>The correct file is the one named like <code>Current_Layout-CSV_YYYYMMDD_HHMMSS.csv</code>. The older files with <code>_DOM_</code> in the name were experimental page-scrape files and should not be used as the final result.</p>
+
+          <div class="note">
+            The latest successful different-date test used <code>05/11/2026</code> and generated <code>/Users/harsha/Downloads/Symplr/Current_Layout-CSV_20260517_174604.csv</code>.
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="panel-process" aria-labelledby="tab-process">
+          <h2>Horizontal Process Flow</h2>
+          <p>These are the exact automation steps used to produce the CSV.</p>
+
+          <div class="flow">
+            <div class="step">
+              <b>1</b>
+              <strong>Login</strong>
+              <span>Opens Symplr and signs in with the configured automation account.</span>
+            </div>
+            <div class="step">
+              <b>2</b>
+              <strong>Open Report</strong>
+              <span>Navigates to Reports and selects <code>UAFCompare1</code>.</span>
+            </div>
+            <div class="step">
+              <b>3</b>
+              <strong>Set Dates</strong>
+              <span>Fills both date fields with the selected start and end date.</span>
+            </div>
+            <div class="step">
+              <b>4</b>
+              <strong>Run Report</strong>
+              <span>Clicks <code>View Report</code> and waits for the rendered results.</span>
+            </div>
+            <div class="step">
+              <b>5</b>
+              <strong>Export CSV</strong>
+              <span>Chooses <code>CSV</code> for <code>Current Layout</code> and downloads the file.</span>
+            </div>
+          </div>
+
+          <h3>Why This Confirms The Right Result</h3>
+          <p>The script now scopes the export controls to the <code>Current Layout</code> row, clicks the nearby <code>Download</code> option, then validates the downloaded CSV columns before marking the run successful.</p>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="panel-validation" aria-labelledby="tab-validation">
+          <h2>How The Output Is Checked</h2>
+          <p>The automation does not accept a file just because something downloaded. It performs these checks first.</p>
+
+          <div class="checklist">
+            <div class="check">
+              <strong>Pass: File exists</strong>
+              <span>The CSV path must exist in <code>/Users/harsha/Downloads/Symplr</code>.</span>
+            </div>
+            <div class="check">
+              <strong>Pass: File is not empty</strong>
+              <span>The file must be larger than the minimum CSV size threshold.</span>
+            </div>
+            <div class="check">
+              <strong>Pass: Header is readable</strong>
+              <span>The validator uses Python's CSV parser and handles the UTF-8 BOM correctly.</span>
+            </div>
+            <div class="check">
+              <strong>Pass: Expected columns exist</strong>
+              <span>The file must include all required Current Layout fields.</span>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Required Column</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>Applicant Name</td><td>Confirms applicant identity is included.</td></tr>
+                <tr><td>Email</td><td>Confirms contact data is included.</td></tr>
+                <tr><td>Job Title / Job Code</td><td>Confirms role details are included.</td></tr>
+                <tr><td>Hired Date / Start Date</td><td>Confirms timing fields are included.</td></tr>
+                <tr><td>Facility / Department</td><td>Confirms organization placement is included.</td></tr>
+                <tr><td>Orientation 1 Date</td><td>Confirms orientation date is included.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="panel-outputs" aria-labelledby="tab-outputs">
+          <h2>Generated Files To Review</h2>
+          <p>These are the current confirmed automation outputs.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date Selected</th>
+                  <th>Generated File</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>05/26/2026</td>
+                  <td><a href="file:///Users/harsha/Downloads/Symplr/Current_Layout-CSV_20260517_174123.csv">Current_Layout-CSV_20260517_174123.csv</a></td>
+                  <td>Passed validation, 38 lines</td>
+                </tr>
+                <tr>
+                  <td>05/11/2026</td>
+                  <td><a href="file:///Users/harsha/Downloads/Symplr/Current_Layout-CSV_20260517_174604.csv">Current_Layout-CSV_20260517_174604.csv</a></td>
+                  <td>Passed validation, 36 lines</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="note warning">
+            Do not use <code>UAFCompare1_05-26-2026_DOM_20260517_170835.csv</code> as the final output. That file came from the experimental DOM extraction path and does not contain the full Current Layout export.
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="panel-repo" aria-labelledby="tab-repo">
+          <h2>Repository And Code Explanation</h2>
+          <p>This repository is a small Python automation project. Its main purpose is to download the Symplr <code>UAFCompare1</code> report as an official <code>Current Layout</code> CSV without manual browser work.</p>
+
+          <h3>Important Files</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>What It Does</th>
+                  <th>When You Use It</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>scripts/download_hire_report.py</code></td>
+                  <td>Main automation script. Logs in, opens the report, selects dates, exports CSV, and validates the result.</td>
+                  <td>Use this for real report downloads.</td>
+                </tr>
+                <tr>
+                  <td><code>scripts/debug_page.py</code></td>
+                  <td>Debug helper that opens the browser visually and checks whether important page elements exist.</td>
+                  <td>Use this only when selectors break or the Symplr page changes.</td>
+                </tr>
+                <tr>
+                  <td><code>requirements.txt</code></td>
+                  <td>Lists Python dependencies needed by the automation.</td>
+                  <td>Use during setup with <code>pip install -r requirements.txt</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>run_hire_report.bat</code></td>
+                  <td>Windows runner that activates the virtual environment and runs the Python script.</td>
+                  <td>Use on a Windows VM or Task Scheduler setup.</td>
+                </tr>
+                <tr>
+                  <td><code>user_guide.html</code></td>
+                  <td>This guide. Explains the process, validation, output files, and code structure.</td>
+                  <td>Use when reviewing or explaining the automation.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Main Programming Syntax Used</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Syntax / Tool</th>
+                  <th>Example</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Python functions</td>
+                  <td><code>def run(...):</code></td>
+                  <td>Breaks the automation into reusable steps such as validation, date setting, and export handling.</td>
+                </tr>
+                <tr>
+                  <td>Playwright sync API</td>
+                  <td><code>page.click(...)</code>, <code>page.locator(...)</code></td>
+                  <td>Controls the browser, fills fields, clicks buttons, waits for downloads, and takes screenshots.</td>
+                </tr>
+                <tr>
+                  <td>CSS selectors</td>
+                  <td><code>[aria-label='Export']</code></td>
+                  <td>Finds page elements in the Symplr web app.</td>
+                </tr>
+                <tr>
+                  <td>JavaScript evaluation</td>
+                  <td><code>page.evaluate("""...""")</code></td>
+                  <td>Handles tricky React-controlled inputs and dropdown menus when normal clicks are unreliable.</td>
+                </tr>
+                <tr>
+                  <td>CSV parsing</td>
+                  <td><code>csv.reader(f)</code></td>
+                  <td>Reads the exported CSV header safely, including quoted values and UTF-8 BOM characters.</td>
+                </tr>
+                <tr>
+                  <td>Path handling</td>
+                  <td><code>Path(...).expanduser().resolve()</code></td>
+                  <td>Builds reliable file paths for downloads and screenshots.</td>
+                </tr>
+                <tr>
+                  <td>Retry loop</td>
+                  <td><code>for attempt in range(...):</code></td>
+                  <td>Retries the automation if a page load, modal, or download temporarily fails.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Key Code Sections</h3>
+          <div class="flow">
+            <div class="step">
+              <b>A</b>
+              <strong>Configuration</strong>
+              <span>Constants define URLs, retry counts, timeouts, holiday dates, and required CSV columns.</span>
+            </div>
+            <div class="step">
+              <b>B</b>
+              <strong>Date Logic</strong>
+              <span><code>next_biweekly_date()</code> calculates the next report date and moves holidays/weekends forward.</span>
+            </div>
+            <div class="step">
+              <b>C</b>
+              <strong>Browser Flow</strong>
+              <span><code>run()</code> launches Chromium and performs the login, report selection, date entry, and export.</span>
+            </div>
+            <div class="step">
+              <b>D</b>
+              <strong>Export Handling</strong>
+              <span><code>current_layout_export_row()</code> scopes actions to the right export row so the CSV is the official Current Layout file.</span>
+            </div>
+            <div class="step">
+              <b>E</b>
+              <strong>Validation</strong>
+              <span><code>validate_csv_file()</code> and <code>validate_csv_columns()</code> confirm that the downloaded file is usable.</span>
+            </div>
+          </div>
+
+          <h3>Important Snippets</h3>
+          <p>The script validates CSV columns using the real CSV parser instead of manually splitting text. This avoids false failures when the first header has a BOM or quotes.</p>
+          <pre><code>with open(filepath, 'r', encoding='utf-8-sig', newline='') as f:
+    reader = csv.reader(f)
+    cols = next(reader)
+    cols = [c.strip() for c in cols]</code></pre>
+
+          <p>The script uses Playwright's download listener so it only continues after the browser actually creates a CSV download.</p>
+          <pre><code>with page.expect_download(timeout=LONG_TIMEOUT) as dl_info:
+    click_dropdown_option_near(page, "Download", export_dropdown_btn)
+
+download = dl_info.value
+download.save_as(str(dest))</code></pre>
+
+          <p>The script scopes the export action to the <code>Current Layout</code> row. This prevents selecting the wrong report export option.</p>
+          <pre><code>current_layout = page.locator(
+    "div[data-name='selected-option'][data-id='Current Layout']"
+).first
+return current_layout.locator(
+    "xpath=ancestor::li[@data-name='adaptable-object-list-item'][1]"
+)</code></pre>
+
+          <h3>Date Logic</h3>
+          <p>The report date follows a fixed two-week cadence from the known anchor date. If a scheduled report date falls on a weekend or holiday, that one report moves to the next business day. The next cycle still stays on the original every-two-weeks schedule.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Scheduled Cycle Date</th>
+                  <th>Reason</th>
+                  <th>Automation Uses</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>05/11/2026</td>
+                  <td>Normal biweekly date</td>
+                  <td>05/11/2026</td>
+                </tr>
+                <tr>
+                  <td>05/25/2026</td>
+                  <td>Memorial Day holiday</td>
+                  <td>05/26/2026</td>
+                </tr>
+                <tr>
+                  <td>06/08/2026</td>
+                  <td>Next normal biweekly date after the 05/25 cycle</td>
+                  <td>06/08/2026</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <pre><code>def next_biweekly_date(anchor=BI_WEEKLY_ANCHOR, today=None):
+    today = today or datetime.date.today()
+    scheduled = anchor
+
+    while True:
+        report_date = next_business_day(scheduled)
+        if report_date >= today:
+            return report_date
+        scheduled += datetime.timedelta(days=BI_WEEKLY_DAYS)</code></pre>
+
+          <div class="note">
+            The most important code fix was changing validation from manual comma splitting to <code>csv.reader</code> with <code>utf-8-sig</code>. That confirmed the file was correct instead of failing because of the hidden BOM at the start of <code>Applicant Name</code>.
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="panel-runbook" aria-labelledby="tab-runbook">
+          <h2>How To Run And Confirm</h2>
+          <p>Use this command format when you want a specific report date.</p>
+
+          <pre><code>cd /Users/harsha/Downloads/myapp
+.venv/bin/python scripts/download_hire_report.py --start 05/11/2026 --end 05/11/2026 --out /Users/harsha/Downloads/Symplr</code></pre>
+
+          <h3>Success Looks Like This</h3>
+          <pre><code>CSV validation passed
+CSV contains expected layout columns
+Download complete!
+File : /Users/harsha/Downloads/Symplr/Current_Layout-CSV_YYYYMMDD_HHMMSS.csv</code></pre>
+
+          <h3>Quick File Check</h3>
+          <pre><code>wc -l /Users/harsha/Downloads/Symplr/Current_Layout-CSV_YYYYMMDD_HHMMSS.csv
+head -2 /Users/harsha/Downloads/Symplr/Current_Layout-CSV_YYYYMMDD_HHMMSS.csv</code></pre>
+
+          <h3>Credential Setup</h3>
+          <p>The script should not contain usernames or passwords. It now reads credentials only from environment variables.</p>
+
+          <pre><code>export HIRE_USER="your-username"
+export HIRE_PASS="your-password"</code></pre>
+
+          <p>For a one-time manual run, set the variables in the same terminal before running the script.</p>
+          <pre><code>cd /Users/harsha/Downloads/myapp
+export HIRE_USER="your-username"
+export HIRE_PASS="your-password"
+.venv/bin/python scripts/download_hire_report.py --out /Users/harsha/Downloads/Symplr</code></pre>
+
+          <p>For repeated local runs on macOS, store them in a private shell environment file and load it before running.</p>
+          <pre><code>nano ~/.hire_report_env</code></pre>
+
+          <pre><code>export HIRE_USER="your-username"
+export HIRE_PASS="your-password"
+export DOWNLOAD_DIR="/Users/harsha/Downloads/Symplr"</code></pre>
+
+          <pre><code>chmod 600 ~/.hire_report_env
+source ~/.hire_report_env
+.venv/bin/python scripts/download_hire_report.py</code></pre>
+
+          <div class="note warning">
+            Keep <code>~/.hire_report_env</code> private and do not commit it to Git. The script now exits with <code>Set HIRE_USER and HIRE_PASS environment variables</code> if credentials are missing.
+          </div>
+
+          <h3>Windows VM / Task Scheduler Credentials</h3>
+          <p>For the Windows VM plan, <code>run_hire_report.bat</code> includes the Symplr automation account so Task Scheduler can run without a manual terminal session.</p>
+
+          <pre><code>set "HIRE_USER=sa-powerapps"
+set "HIRE_PASS=Digital1500"</code></pre>
+
+          <p>Task Scheduler should run this file:</p>
+          <pre><code>C:\hire-report-automation\run_hire_report.bat</code></pre>
+
+          <div class="note warning">
+            Because the password is stored in the Windows batch file for scheduled runs, keep the VM and project folder access restricted. If the password changes, update <code>run_hire_report.bat</code>.
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+
+    function activateTab(tab) {
+      tabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+      panels.forEach((panel) => panel.classList.toggle('active', panel.id === tab.getAttribute('aria-controls')));
+      tab.focus();
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activateTab(tab));
+      tab.addEventListener('keydown', (event) => {
+        const keyMap = { ArrowRight: 1, ArrowLeft: -1, Home: 'home', End: 'end' };
+        if (!(event.key in keyMap)) return;
+        event.preventDefault();
+
+        let nextIndex = index;
+        if (keyMap[event.key] === 'home') nextIndex = 0;
+        else if (keyMap[event.key] === 'end') nextIndex = tabs.length - 1;
+        else nextIndex = (index + keyMap[event.key] + tabs.length) % tabs.length;
+
+        activateTab(tabs[nextIndex]);
+      });
+    });
+  </script>
+</body>
+</html>

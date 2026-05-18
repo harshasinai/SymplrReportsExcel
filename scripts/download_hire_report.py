@@ -8,8 +8,8 @@ Symplr Recruiting (HealthcareSource) for Sinai Chicago.
 Usage
 -----
   # set credentials once
-  export HIRE_USER="sa-powerapps"
-  export HIRE_PASS="Digital1500"
+  export HIRE_USER="your-username"
+  export HIRE_PASS="your-password"
   export DOWNLOAD_DIR="~/Downloads/Symplr"   # optional
 
   # run (auto-calculates next bi-weekly date from anchor 2026-04-27)
@@ -33,8 +33,10 @@ import sys
 import datetime
 import logging
 import time
+import json
 from pathlib import Path
 from typing import Optional
+import csv
 
 # Configure logging
 logging.basicConfig(
@@ -63,6 +65,10 @@ REPORTS_URL = "https://pm.healthcaresource.com/PM/sinai/PMWeb/ManageReports?isMe
 BI_WEEKLY_ANCHOR = datetime.date(2026, 4, 13)   # First known valid cycle date
 BI_WEEKLY_DAYS   = 14
 
+HOLIDAYS = {
+    datetime.date(2026, 5, 25),  # Memorial Day
+}
+
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
@@ -76,6 +82,36 @@ NETWORK_TIMEOUT = 30_000
 
 # File validation
 MIN_CSV_BYTES = 100  # Minimum reasonable CSV size
+EXPECTED_LAYOUT_COLUMNS = [
+    "Applicant Name", "Email", "Job Title", "Job Code", "Hired Date",
+    "Start Date", "Phone", "Recruiter", "Hiring Manager", "Account",
+    "Facility", "Facility Code", "Department", "Department Code",
+    "Orientation 1 Date",
+]
+
+OUTPUT_FILE_PREFIX = "SymplrHireList"
+
+
+def build_output_filename(now: Optional[datetime.datetime] = None) -> str:
+    """Return the standard output CSV name: SymplrHireList_MMDDYYYY_HH:MM.csv."""
+    now = now or datetime.datetime.now()
+    return f"{OUTPUT_FILE_PREFIX}_{now.strftime('%m%d%Y_%H:%M')}.csv"
+
+
+def unique_output_path(out_dir: Path, filename: str) -> Path:
+    """Avoid overwriting a same-minute export if the script is run twice."""
+    dest = out_dir / filename
+    if not dest.exists():
+        return dest
+
+    stem = dest.stem
+    suffix = dest.suffix
+    counter = 2
+    while True:
+        candidate = out_dir / f"{stem}_{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 # ---------------------------------------------------------------------------
@@ -110,22 +146,138 @@ def validate_csv_file(filepath: Path) -> bool:
     return True
 
 
+def validate_csv_columns(filepath: Path, expected_columns):
+    """Ensure the first row contains the expected Current Layout columns."""
+    try:
+        with open(filepath, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.reader(f)
+            try:
+                cols = next(reader)
+            except StopIteration:
+                logging.warning(f"CSV header row is empty: {filepath}")
+                return False
+            cols = [c.strip() for c in cols]
+            missing = [c for c in expected_columns if c not in cols]
+            if missing:
+                logging.warning(f"Missing expected CSV columns: {missing}")
+                logging.warning(f"Found columns: {cols}")
+                return False
+    except Exception as e:
+        logging.warning(f"Error validating CSV columns: {e}")
+        return False
+    logging.info(f"✅ CSV contains expected layout columns")
+    return True
+
+
+def extract_table_and_save(page, out_dir: Path, start_date: str):
+    """Extract tabular data from the page DOM and save as CSV. Returns Path."""
+    js = """
+    (() => {
+        const visible = el => {
+            const s = window.getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+        };
+
+        // Prefer AG Grid / ARIA grid output used by this report.
+        const grids = Array.from(document.querySelectorAll('[role="grid"]').length ? document.querySelectorAll('[role="grid"]') : []).filter(visible);
+        if (grids.length) {
+            const grid = grids[0];
+            const rowEls = Array.from(grid.querySelectorAll('[role="row"]').length ? grid.querySelectorAll('[role="row"]') : []).filter(visible);
+            const rows = rowEls.map(r => Array.from(r.querySelectorAll('[role="gridcell"], [role="cell"]')).map(c => c.innerText.replace(/\\r?\\n/g, ' ').trim()));
+            return {type: 'grid', rows};
+        }
+
+        // Prefer a large visible table if no ARIA grid exists.
+        const tables = Array.from(document.querySelectorAll('table')).filter(visible);
+        if (tables.length) {
+            const best = tables.reduce((a, b) => (a.rows.length >= b.rows.length ? a : b));
+            const rows = Array.from(best.rows).map(r => Array.from(r.cells).map(c => c.innerText.replace(/\\r?\\n/g, ' ').trim()));
+            return {type: 'table', rows};
+        }
+
+        // Last resort: collect text from visible divs.
+        const candidates = Array.from(document.querySelectorAll('div')).filter(visible).map(d => d.innerText.trim()).filter(Boolean);
+        return {type: 'text', rows: candidates.slice(0, 200).map(r => [r])};
+    })()
+    """
+
+    try:
+        res = page.evaluate(js)
+    except Exception as e:
+        raise RuntimeError(f"DOM extraction JS failed: {e}")
+
+    rows = res.get('rows') if isinstance(res, dict) else None
+    if not rows:
+        raise RuntimeError("No tabular rows found in page DOM")
+
+    # Normalize rows (ensure every row is list of strings)
+    norm_rows = []
+    max_cols = 0
+    for r in rows:
+        if not isinstance(r, list):
+            r = [str(r)]
+        row = [str(c) if c is not None else '' for c in r]
+        norm_rows.append(row)
+        if len(row) > max_cols:
+            max_cols = len(row)
+
+    # Pad rows to equal length
+    for i, r in enumerate(norm_rows):
+        if len(r) < max_cols:
+            norm_rows[i] = r + [''] * (max_cols - len(r))
+
+    dest = unique_output_path(out_dir, build_output_filename())
+
+    with open(dest, 'w', encoding='utf-8', newline='') as fh:
+        writer = csv.writer(fh)
+        for row in norm_rows:
+            writer.writerow(row)
+
+    # Basic validation
+    if not validate_csv_file(dest):
+        raise RuntimeError(f"DOM-extracted CSV failed validation: {dest}")
+
+    print(f"\n✅  DOM CSV written: {dest}")
+    return dest
+
+
 # ---------------------------------------------------------------------------
 # Bi-weekly date calculator
 # ---------------------------------------------------------------------------
-def next_biweekly_date(anchor: datetime.date = BI_WEEKLY_ANCHOR) -> datetime.date:
+def next_business_day(date: datetime.date) -> datetime.date:
+    """Move weekends and known holidays to the next weekday."""
+    while date.weekday() >= 5 or date in HOLIDAYS:
+        date += datetime.timedelta(days=1)
+    return date
+
+
+def next_biweekly_date(
+    anchor: datetime.date = BI_WEEKLY_ANCHOR,
+    today: Optional[datetime.date] = None,
+) -> datetime.date:
     """
-    Returns next payroll biweekly date including today.
+    Return the next biweekly report date including today.
+
+    The base schedule stays every 14 days from the anchor. If a scheduled
+    date lands on a weekend or known holiday, only that occurrence moves to
+    the next business day; future scheduled dates still follow the original
+    two-week cadence.
+
     Examples:
-      If today is 04/27 -> returns 04/27
-      If today is 04/28 -> returns 05/11
-      If today is 05/11 -> returns 05/11
+      If today is 05/11/2026 -> returns 05/11/2026
+      If today is 05/25/2026 -> returns 05/26/2026 (Memorial Day observed)
+      If today is 05/26/2026 -> returns 05/26/2026
+      If today is 05/27/2026 -> returns 06/08/2026
     """
-    today = datetime.date.today()
-    current = anchor
-    while current < today:
-        current += datetime.timedelta(days=14)
-    return current
+    today = today or datetime.date.today()
+    scheduled = anchor
+
+    while True:
+        report_date = next_business_day(scheduled)
+        if report_date >= today:
+            return report_date
+        scheduled += datetime.timedelta(days=BI_WEEKLY_DAYS)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +315,63 @@ def dismiss_email_modal(page, timeout_ms: int = 3000) -> bool:
         return True
     except PWTimeout:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Dismiss unexpected informational modals
+# ---------------------------------------------------------------------------
+def dismiss_unexpected_modal(page, timeout_ms: int = 1000) -> bool:
+    """Attempt to close known informational popups or modals."""
+    deadline = time.time() + (timeout_ms / 1000)
+    while time.time() <= deadline:
+        try:
+            clicked = page.evaluate("""
+            () => {
+                const labels = ['OK', 'Close', 'Dismiss', 'Got it', 'Remind me later', 'Continue'];
+                const closeSelectors = [
+                    '[aria-label="Close"]',
+                    'button[title="Close"]',
+                    '.modal-close',
+                    '.dialog-close',
+                    '.close-button',
+                    '.close'
+                ];
+                const isVisible = el => {
+                    const style = window.getComputedStyle(el);
+                    const box = el.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+                };
+
+                for (const label of labels) {
+                    const button = [...document.querySelectorAll('button, [role="button"], a')]
+                        .find(el => isVisible(el) && el.textContent.trim() === label);
+                    if (button) {
+                        button.click();
+                        return label;
+                    }
+                }
+
+                for (const selector of closeSelectors) {
+                    const button = [...document.querySelectorAll(selector)].find(isVisible);
+                    if (button) {
+                        button.click();
+                        return selector;
+                    }
+                }
+
+                return null;
+            }
+            """)
+            if clicked:
+                print(f"  ⚠️   Dismissed unexpected modal via: {clicked}")
+                page.wait_for_timeout(500)
+                return True
+        except Exception as e:
+            logging.warning(f"Unexpected modal dismiss probe failed: {e}")
+            return False
+
+        page.wait_for_timeout(100)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -290,11 +499,216 @@ def click_view_report(page) -> bool:
     return result in {"react-clicked", "dom-clicked"}
 
 
+def open_export_panel(page) -> bool:
+    """Open the ActiveReports export settings panel."""
+    try:
+        export_btn = page.locator("[aria-label='Export']").first
+        export_btn.wait_for(state="visible", timeout=5_000)
+        export_btn.click()
+        page.wait_for_timeout(2_000)
+        return True
+    except PWTimeout:
+        pass
+
+    # Newer layout may hide Export behind the grid settings gear.
+    settings_selectors = [
+        "[aria-label='Settings']",
+        "[title='Settings']",
+        ".ab-Icon--settings",
+        ".ab-Icon--gear",
+        "button:has(.ab-Icon--settings)",
+        "button:has(.ab-Icon--gear)",
+    ]
+    for selector in settings_selectors:
+        try:
+            settings = page.locator(selector).first
+            settings.wait_for(state="visible", timeout=2_000)
+            settings.click()
+            page.wait_for_timeout(1_000)
+
+            try:
+                export_item = page.get_by_text("Export", exact=True).first
+                export_item.wait_for(state="visible", timeout=3_000)
+                export_item.click()
+            except PWTimeout:
+                # Left-side Settings Panel menu item, based on the current layout.
+                page.mouse.click(122, 390)
+
+            page.wait_for_timeout(2_000)
+            return True
+        except PWTimeout:
+            continue
+        except Exception as e:
+            logging.warning(f"Export panel fallback failed for {selector}: {e}")
+
+    return False
+
+
+def current_layout_export_row(page):
+    """Return the visible Export panel row for Report > Current Layout."""
+    current_layout = page.locator(
+        "div[data-name='selected-option'][data-id='Current Layout']"
+    ).first
+    current_layout.wait_for(state="visible", timeout=10_000)
+    return current_layout.locator("xpath=ancestor::li[@data-name='adaptable-object-list-item'][1]")
+
+
+def dump_export_debug(page, out_dir: Path, label: str):
+    """Save visible export/dropdown candidates for future selector fixes."""
+    try:
+        debug = page.evaluate("""
+        () => {
+            const norm = value => (value || '').replace(/\\s+/g, ' ').trim();
+            const visible = el => {
+                const style = window.getComputedStyle(el);
+                const box = el.getBoundingClientRect();
+                return style.display !== 'none' &&
+                       style.visibility !== 'hidden' &&
+                       box.width > 0 &&
+                       box.height > 0;
+            };
+
+            return [...document.querySelectorAll('button, [role="menuitem"], [role="option"], [data-name], div, li')]
+                .filter(el => visible(el))
+                .map(el => {
+                    const box = el.getBoundingClientRect();
+                    return {
+                        tag: el.tagName,
+                        text: norm(el.textContent).slice(0, 120),
+                        role: el.getAttribute('role'),
+                        dataName: el.getAttribute('data-name'),
+                        ariaLabel: el.getAttribute('aria-label'),
+                        className: String(el.className || '').slice(0, 160),
+                        rect: {
+                            x: Math.round(box.x),
+                            y: Math.round(box.y),
+                            width: Math.round(box.width),
+                            height: Math.round(box.height)
+                        }
+                    };
+                })
+                .filter(item => /Download|Clipboard|Export Report|CSV|Current Layout/i.test(
+                    [item.text, item.dataName, item.ariaLabel, item.className].filter(Boolean).join(' ')
+                ));
+        }
+        """)
+        path = out_dir / f"{label}.json"
+        path.write_text(json.dumps(debug, indent=2), encoding="utf-8")
+        print(f"  🧾  Export debug saved: {path}")
+    except Exception as e:
+        logging.warning(f"Export debug dump failed: {e}")
+
+
+def click_dropdown_option_near(page, label: str, anchor_locator) -> bool:
+    """
+    Click a visible dropdown option rendered near the anchor button.
+    Symplr/Adaptable renders the menu outside the report row, so row-scoped
+    locators cannot see the Download option after the dropdown opens.
+    """
+    anchor = anchor_locator.bounding_box()
+    if not anchor:
+        raise RuntimeError("Could not locate Export Report dropdown button")
+
+    candidates = page.evaluate("""
+    ({ label, anchor }) => {
+        const norm = value => (value || '').replace(/\\s+/g, ' ').trim();
+        const visible = el => {
+            const style = window.getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return style.display !== 'none' &&
+                   style.visibility !== 'hidden' &&
+                   box.width > 0 &&
+                   box.height > 0;
+        };
+        const clickableAncestor = el => {
+            let node = el;
+            while (node && node !== document.body) {
+                const box = node.getBoundingClientRect();
+                const role = node.getAttribute('role') || '';
+                const dataName = node.getAttribute('data-name') || '';
+                const tag = node.tagName;
+                const cursor = window.getComputedStyle(node).cursor;
+                const text = norm(node.textContent);
+                const clickable = tag === 'BUTTON' ||
+                    role === 'menuitem' ||
+                    role === 'option' ||
+                    Boolean(dataName) ||
+                    cursor === 'pointer' ||
+                    typeof node.onclick === 'function';
+
+                if (visible(node) &&
+                    clickable &&
+                    text.includes(label) &&
+                    !text.includes('Clipboard') &&
+                    box.width >= 40 &&
+                    box.height >= 18) {
+                    return node;
+                }
+                node = node.parentElement;
+            }
+            return el;
+        };
+
+        const raw = [...document.querySelectorAll('body *')]
+            .filter(el => visible(el) && norm(el.textContent) === label)
+            .map(el => clickableAncestor(el));
+
+        const unique = [];
+        for (const el of raw) {
+            if (!unique.includes(el)) unique.push(el);
+        }
+
+        return unique
+            .map(el => {
+                const box = el.getBoundingClientRect();
+                const text = norm(el.textContent);
+                return {
+                    x: box.x,
+                    y: box.y,
+                    width: box.width,
+                    height: box.height,
+                    text,
+                    role: el.getAttribute('role') || '',
+                    dataName: el.getAttribute('data-name') || '',
+                    distance: Math.abs((box.x + box.width / 2) - (anchor.x + anchor.width / 2)) +
+                              Math.abs(box.y - (anchor.y + anchor.height))
+                };
+            })
+            .filter(item =>
+                item.y >= anchor.y + anchor.height &&
+                item.y <= anchor.y + anchor.height + 180 &&
+                Math.abs((item.x + item.width / 2) - (anchor.x + anchor.width / 2)) <= 220
+            )
+            .sort((a, b) => a.distance - b.distance);
+    }
+    """, {"label": label, "anchor": anchor})
+
+    if candidates:
+        candidate = candidates[0]
+        page.mouse.click(
+            candidate["x"] + candidate["width"] / 2,
+            candidate["y"] + candidate["height"] / 2,
+        )
+        print(
+            "  ✅  Clicked dropdown option "
+            f"{label!r} at ({candidate['x']:.0f}, {candidate['y']:.0f})"
+        )
+        return True
+
+    # Last-resort coordinate fallback: first menu row below the dropdown button.
+    page.mouse.click(
+        anchor["x"] + (anchor["width"] / 2),
+        anchor["y"] + anchor["height"] + 20,
+    )
+    print(f"  ⚠️   Used coordinate fallback for dropdown option {label!r}")
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Main automation
 # ---------------------------------------------------------------------------
 def run(username: str, password: str, start_date: str, end_date: str,
-        headless: bool, out_dir: Path):
+    headless: bool, out_dir: Path, dom_export: bool = False):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n🚀  Starting Symplr UAFCompare1 download")
@@ -309,6 +723,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         viewport={'width': 1280, 'height': 720}
     )
     page = ctx.new_page()
+    page.on("dialog", lambda dialog: dialog.dismiss())
     page.set_default_timeout(int(60_000 * TIMEOUT_BUFFER))  # Add timeout buffer
 
     try:
@@ -331,6 +746,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         
         page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
         page.wait_for_timeout(2_000)
+        dismiss_unexpected_modal(page)
         shot(page, "02_post_login", out_dir)
 
         if "LogOn" in page.url:
@@ -343,6 +759,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         page.goto(REPORTS_URL)
         page.wait_for_timeout(4_000)
         page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        dismiss_unexpected_modal(page)
         shot(page, "03_reports_page", out_dir)
         print("  ✅  Reports page loaded\n")
 
@@ -362,6 +779,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         uaf_link.click()
         page.wait_for_timeout(4_000)
         dismiss_email_modal(page)
+        dismiss_unexpected_modal(page)
 
         try:
             page.wait_for_load_state("networkidle", timeout=LONG_TIMEOUT)
@@ -369,6 +787,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
             pass
 
         dismiss_email_modal(page)
+        dismiss_unexpected_modal(page)
         shot(page, "04_uafcompare1_loaded", out_dir)
         print("  ✅  UAFCompare1 report opened\n")
 
@@ -409,6 +828,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
 
         page.wait_for_timeout(3_000)
         dismiss_email_modal(page, timeout_ms=MODAL_TIMEOUT)
+        dismiss_unexpected_modal(page)
 
         try:
             page.wait_for_load_state("networkidle", timeout=LONG_TIMEOUT)
@@ -417,9 +837,20 @@ def run(username: str, password: str, start_date: str, end_date: str,
 
         page.wait_for_timeout(3_500)
         dismiss_email_modal(page)
+        dismiss_unexpected_modal(page)
         shot(page, "07_report_loaded", out_dir)
         print("  ✅  Report loaded\n")
 
+        # If DOM export requested, extract table directly and save CSV
+        if dom_export:
+            print("  ⚠️   DOM extraction is experimental. Full Current Layout columns may not be visible in the rendered grid.")
+            dest = extract_table_and_save(page, out_dir, start_date)
+            if not validate_csv_columns(dest, EXPECTED_LAYOUT_COLUMNS):
+                raise RuntimeError(
+                    f"DOM-exported CSV is missing expected layout fields: {dest}. "
+                    "Use the default export path to get the full Current Layout CSV."
+                )
+            return dest
         # ── 7. Collapse filter panel (optional, cleans viewport) ──────────
         expanded = page.get_attribute(".toppanebtn", "aria-expanded")
         if expanded == "true":
@@ -429,19 +860,19 @@ def run(username: str, password: str, start_date: str, end_date: str,
         # ── 8. Open Export Settings Panel ────────────────────────────────
         print("Step 7: Opening Export panel …")
         page.wait_for_timeout(2_000)
-        export_btn = page.locator("[aria-label='Export']")
-        export_btn.wait_for(state="visible", timeout=15_000)
-        page.wait_for_timeout(1_000)
-        export_btn.click()
-        page.wait_for_timeout(2_000)
+        if not open_export_panel(page):
+            shot(page, "ERROR_open_export", out_dir)
+            raise RuntimeError("Could not open export panel")
+        dismiss_unexpected_modal(page)
         shot(page, "08_export_panel", out_dir)
         print("  ✅  Export panel opened\n")
 
         # ── 9. Select CSV format ──────────────────────────────────────────
         print("Step 8: Selecting CSV format …")
-        # Click the "Select Format" react-select in the first (Current Layout) row
+        # Scope to the first report row: Report > Current Layout.
         page.wait_for_timeout(1_500)
-        format_select = page.locator(".ab-ToolPanel__Export__format-select").first
+        current_layout_row = current_layout_export_row(page)
+        format_select = current_layout_row.locator(".ab-ToolPanel__Export__format-select").first
         format_select.wait_for(state="visible", timeout=10_000)
         page.wait_for_timeout(1_000)
         format_select.click()
@@ -456,106 +887,38 @@ def run(username: str, password: str, start_date: str, end_date: str,
         shot(page, "10_csv_selected", out_dir)
         print("  ✅  CSV selected\n")
 
-        # ── 10. Click Download (via DropdownButton arrow) ─────────────────
+        # ── 10. Open first-row Export Report dropdown, then click Download ─
         print("Step 9: Triggering download …")
         page.wait_for_timeout(2_000)
 
-        # The "Export Report" button is a DropdownButton.
-        # We need to click the ARROW part to get the Download/Clipboard submenu.
-        # Target the first enabled one (data-name="report-export-selector")
-        export_report_btn = page.locator("[data-name='report-export-selector']")
-        export_report_btn.wait_for(state="visible", timeout=10_000)
-        page.wait_for_timeout(1_000)
+        shot(page, "11_before_download", out_dir)
+        current_layout_row = current_layout_export_row(page)
+        export_dropdown_btn = current_layout_row.locator("button[data-name='report-export-selector']").first
+        export_dropdown_btn.wait_for(state="visible", timeout=10_000)
 
-        # Get bounding box so we can click the RIGHT edge (arrow)
-        bbox = export_report_btn.bounding_box()
+        print("  📥 Opening first row Export Report dropdown")
+        export_dropdown_btn.click(force=True)
+        bbox = export_dropdown_btn.bounding_box()
         if bbox:
-            arrow_x = bbox["x"] + bbox["width"] - 8   # right edge = dropdown arrow
-            arrow_y = bbox["y"] + bbox["height"] / 2
-            page.mouse.click(arrow_x, arrow_y)
-        else:
-            # fallback — click by approximate coordinates from confirmed runs
-            page.mouse.click(1128, 277)
-
-        page.wait_for_timeout(2_500)
+            page.mouse.move(
+                bbox["x"] + (bbox["width"] / 2),
+                bbox["y"] + bbox["height"] + 20,
+            )
+        page.wait_for_timeout(800)
         shot(page, "11_download_submenu", out_dir)
 
-        # Try to find and click the proper export option
-        with page.expect_download(timeout=LONG_TIMEOUT) as dl_info:
-            download_found = False
-            for label in ["Download", "Export Report", "Export"]:
-                try:
-                    candidate = page.locator(f"text='{label}'").first
-                    candidate.wait_for(state="visible", timeout=5_000)
-                    print(f"  📥 Clicking menu item: {label}")
-                    candidate.click(force=True)
-                    download_found = True
-                    break
-                except PWTimeout:
-                    pass
-
-            if not download_found:
-                print("  ⚠️   Download/Export option not found. Trying alternative menu items...")
-                try:
-                    menu_items = page.locator("[role='menuitem'], [role='option'], .submenu-item, button[data-test*='export']").all()
-                    if menu_items:
-                        for item in menu_items:
-                            try:
-                                if item.is_visible():
-                                    text = (item.inner_text() or "").strip()
-                                    if not text:
-                                        continue
-                                    if "format" in text.lower():
-                                        continue
-                                    print(f"  📥 Clicking fallback menu item: {text}")
-                                    item.click(force=True)
-                                    download_found = True
-                                    break
-                            except Exception as e:
-                                logging.warning(f"Fallback menu item click failed: {e}")
-                except Exception as e:
-                    logging.warning(f"Error while searching fallback menu items: {e}")
-
-            if not download_found:
-                print("  ⚠️   Menu item click failed. Trying JS evaluation...")
-                clicked = page.evaluate("""
-                    () => {
-                        const labels = ['Download', 'Export Report', 'Export'];
-                        for (const label of labels) {
-                            const nodes = [...document.querySelectorAll('*')].filter(el => el.textContent && el.textContent.trim() === label);
-                            if (nodes.length) {
-                                nodes[0].click();
-                                return `${label}-clicked`;
-                            }
-                        }
-
-                        const fallback = [...document.querySelectorAll('[role="menuitem"], [role="option"], button[class*="export"]')];
-                        for (let n of fallback) {
-                            const style = window.getComputedStyle(n);
-                            if (style.display !== 'none' && style.visibility !== 'hidden') {
-                                n.click();
-                                return 'fallback-clicked';
-                            }
-                        }
-
-                        return false;
-                    }
-                """)
-                if not clicked:
-                    raise RuntimeError('Could not trigger download - no suitable button found')
+        try:
+            with page.expect_download(timeout=LONG_TIMEOUT) as dl_info:
+                print("  📥 Clicking Download")
+                click_dropdown_option_near(page, "Download", export_dropdown_btn)
+        except PWTimeout:
+            shot(page, "ERROR_download_timeout", out_dir)
+            dump_export_debug(page, out_dir, "ERROR_download_candidates")
+            raise
 
         download = dl_info.value
-        suggested = download.suggested_filename or f"UAFCompare1_{start_date.replace('/', '-')}.csv"
-        
-        # Add timestamp to filename
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        name_parts = suggested.rsplit('.', 1)  # Split filename and extension
-        if len(name_parts) == 2:
-            final_filename = f"{name_parts[0]}_{timestamp}.{name_parts[1]}"
-        else:
-            final_filename = f"{suggested}_{timestamp}"
-        
-        dest = out_dir / final_filename
+
+        dest = unique_output_path(out_dir, build_output_filename())
         download.save_as(str(dest))
 
         shot(page, "12_download_complete", out_dir)
@@ -563,6 +926,8 @@ def run(username: str, password: str, start_date: str, end_date: str,
         # Validate the downloaded CSV
         if not validate_csv_file(dest):
             raise RuntimeError(f"CSV validation failed: {dest}")
+        if not validate_csv_columns(dest, EXPECTED_LAYOUT_COLUMNS):
+            raise RuntimeError(f"Downloaded CSV is missing expected layout fields: {dest}")
 
         print(f"\n✅  Download complete!")
         print(f"    File : {dest}")
@@ -598,6 +963,7 @@ def main():
     parser.add_argument("--headless", action="store_true", help="Run without visible browser")
     parser.add_argument("--quiet",    action="store_true", help="Minimal output (for scheduled runs)")
     parser.add_argument("--out",      help="Output directory (default: ~/Downloads/Symplr)")
+    parser.add_argument("--dom",      action="store_true", help="Experimental: extract CSV from page DOM instead of using export (may miss hidden layout columns)")
     args = parser.parse_args()
 
     # ── Configure logging based on quiet mode ──────────────────────────────
@@ -639,7 +1005,7 @@ def main():
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logging.info(f"Attempt {attempt}/{MAX_RETRIES}")
-            result = run(username, password, start_date, end_date, args.headless, out_dir)
+            result = run(username, password, start_date, end_date, args.headless, out_dir, dom_export=args.dom)
             if args.quiet:
                 print(result)  # Print filepath even in quiet mode
             logging.info(f"✅ Success on attempt {attempt}")

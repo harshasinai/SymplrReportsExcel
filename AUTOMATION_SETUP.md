@@ -17,7 +17,7 @@ The script is now **fully automated** and will run every day at **9:00 PM (21:00
 3. Script logs into HealthCareSource portal
 4. Navigates to Hires Report
 5. Exports data as CSV
-6. Saves to: `/Users/Harsha/Documents/myapp/downloads/hire_report_YYYYMMDD_HHMMSS.csv`
+6. Saves to: `/Users/Harsha/Documents/myapp/downloads/SymplrHireList_MMDDYYYY_HH:MM.csv`
 7. Logs all activity to the log file
 
 ## Files Created/Modified
@@ -35,7 +35,7 @@ The script is now **fully automated** and will run every day at **9:00 PM (21:00
 
 ### Downloaded CSVs
 ```
-/Users/Harsha/Documents/myapp/downloads/hire_report_*.csv
+/Users/Harsha/Documents/myapp/downloads/SymplrHireList_*.csv
 ```
 
 ## How to Run Manually On-The-Fly
@@ -75,7 +75,7 @@ Opening login page...
 Logging in...
 ✓ Login successful
 ...
-✓ CSV saved to: /Users/Harsha/Documents/myapp/downloads/hire_report_20251205_120000.csv
+✓ CSV saved to: /Users/Harsha/Documents/myapp/downloads/SymplrHireList_12052025_22:00.csv
 ```
 
 When you see the last line with the file path, the download is complete! ✓
@@ -100,12 +100,12 @@ tail -f /Users/Harsha/Documents/myapp/logs/hire_report.log
 
 ### View recent downloads
 ```bash
-ls -lh /Users/Harsha/Documents/myapp/downloads/hire_report_*.csv | tail -5
+ls -lh /Users/Harsha/Documents/myapp/downloads/SymplrHireList_*.csv | tail -5
 ```
 
 ### View the content of latest downloaded CSV
 ```bash
-head -5 /Users/Harsha/Documents/myapp/downloads/hire_report_*.csv | tail -2
+head -5 /Users/Harsha/Documents/myapp/downloads/SymplrHireList_*.csv | tail -2
 ```
 
 ### Disable automatic scheduling
