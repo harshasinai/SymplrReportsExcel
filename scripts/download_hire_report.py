@@ -763,6 +763,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         page.fill("input[type='password']", password)
         page.click("button:has-text('Log In')")
         page.wait_for_timeout(3_000)
+        dismiss_unexpected_modal(page, timeout_ms=5_000)
         
         # Wait for authentication spinner to disappear (shows "Authenticating...")
         try:
@@ -771,7 +772,11 @@ def run(username: str, password: str, start_date: str, end_date: str,
         except PWTimeout:
             pass
         
-        page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        dismiss_unexpected_modal(page, timeout_ms=5_000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        except PWTimeout:
+            logging.info("Post-login networkidle timed out; continuing after modal cleanup")
         page.wait_for_timeout(2_000)
         dismiss_unexpected_modal(page)
         shot(page, "02_post_login", out_dir)
