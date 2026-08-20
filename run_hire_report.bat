@@ -58,8 +58,8 @@ if "%SCRIPT_EXIT%"=="0" (
 REM Optional SharePoint upload path. Set SHAREPOINT_SYNC_DIR to the local
 REM OneDrive-synced SymplrEntries folder from the OnboardingProject site.
 if not "%SHAREPOINT_SYNC_DIR%"=="" (
-    echo Copying latest CSV to SharePoint sync folder...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $target = $env:SHAREPOINT_SYNC_DIR; if (-not (Test-Path -LiteralPath $target)) { throw 'SHAREPOINT_SYNC_DIR does not exist: ' + $target }; $latest = Get-ChildItem -LiteralPath $env:DOWNLOAD_DIR -Filter 'SymplrHireList_*.csv' | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $latest) { throw 'No SymplrHireList CSV found in ' + $env:DOWNLOAD_DIR }; Copy-Item -LiteralPath $latest.FullName -Destination $target -Force; Write-Host ('Copied to SharePoint sync folder: ' + (Join-Path $target $latest.Name))"
+    echo Copying Symplr import workbook to SharePoint sync folder...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $target = $env:SHAREPOINT_SYNC_DIR; if (-not (Test-Path -LiteralPath $target)) { throw 'SHAREPOINT_SYNC_DIR does not exist: ' + $target }; $workbook = Join-Path $env:DOWNLOAD_DIR 'Symplr_Import.xlsx'; if (-not (Test-Path -LiteralPath $workbook)) { throw 'Symplr_Import.xlsx not found in ' + $env:DOWNLOAD_DIR }; Copy-Item -LiteralPath $workbook -Destination $target -Force; Write-Host ('Copied to SharePoint sync folder: ' + (Join-Path $target 'Symplr_Import.xlsx'))"
     if errorlevel 1 (
         echo ERROR: SharePoint sync copy failed.
         exit /b 1

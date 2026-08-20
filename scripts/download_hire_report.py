@@ -2,7 +2,7 @@
 """
 symplr_uaf_download.py
 ──────────────────────
-Automates login → UAFCompare1 report → CSV download from
+Automates login → UAFCompare1 report → Excel download from
 Symplr Recruiting (HealthcareSource) for Sinai Chicago.
 
 Usage
@@ -34,16 +34,29 @@ import datetime
 import logging
 import time
 import json
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 import csv
+
+try:
+    import pandas as pd
+    from openpyxl import load_workbook
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+except ImportError:
+    sys.exit("pandas/openpyxl not installed. Run: pip install -r requirements.txt")
+
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('hire_report.log', mode='a'),  # Explicitly set append mode
+        logging.FileHandler('hire_report.log', mode='a', encoding='utf-8'),  # Explicitly set append mode
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -62,7 +75,7 @@ except ImportError:
 LOGIN_URL   = "https://pm.healthcaresource.com/PM/sinai/Account/LogOn"
 REPORTS_URL = "https://pm.healthcaresource.com/PM/sinai/PMWeb/ManageReports?isMenuNavigation=true"
 
-BI_WEEKLY_ANCHOR = datetime.date(2026, 4, 13)   # First known valid cycle date
+BI_WEEKLY_ANCHOR = datetime.date(2026, 4, 13)   # First known valid NCO cycle date
 BI_WEEKLY_DAYS   = 14
 
 HOLIDAYS = {
@@ -82,6 +95,7 @@ NETWORK_TIMEOUT = 30_000
 
 # File validation
 MIN_CSV_BYTES = 100  # Minimum reasonable CSV size
+MIN_XLSX_BYTES = 100  # Minimum reasonable Excel workbook size
 EXPECTED_LAYOUT_COLUMNS = [
     "Applicant Name", "Email", "Job Title", "Job Code", "Hired Date",
     "Start Date", "Phone", "Recruiter", "Hiring Manager", "Account",
@@ -90,39 +104,35 @@ EXPECTED_LAYOUT_COLUMNS = [
 ]
 
 OUTPUT_FILE_PREFIX = "SymplrHireList"
+EXPORT_FORMAT = "Excel"
+IMPORT_WORKBOOK_NAME = "Symplr_Import.xlsx"
+IMPORT_WORKSHEET_NAME = "SymplrData"
+IMPORT_TABLE_NAME = "tblSymplrImport"
+
+SOURCE_EMAIL_COLUMN = "Email"
+SOURCE_START_DATE_COLUMN = "Start Date"
+SOURCE_ORIENTATION_DATE_COLUMN = "Orientation 1 Date"
+SOURCE_HIRED_DATE_COLUMN = "Hired Date"
+
+V2_REQUIRED_SOURCE_COLUMNS = [
+    "Applicant Name", SOURCE_EMAIL_COLUMN, "Job Title", "Job Code",
+    SOURCE_HIRED_DATE_COLUMN, SOURCE_START_DATE_COLUMN, "Phone", "Recruiter",
+    "Hiring Manager", "Account", "Facility", "Facility Code", "Department",
+    "Department Code", SOURCE_ORIENTATION_DATE_COLUMN,
+]
+
+IMPORT_COLUMNS = [
+    "Applicant Name", "Email", "Job Title", "Job Code", "Hired Date",
+    "Start date", "Phone", "Recruiter", "Hiring Manager", "Account",
+    "Facility", "Facility Code", "Department", "Department Code", "NCO date",
+]
 
 
-def browser_launch_options(headless: bool) -> dict:
-    """Return Playwright launch options, preferring installed Chrome/Edge on Windows."""
-    options = {"headless": headless, "slow_mo": 80}
-
-    env_path = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE") or os.environ.get("CHROME_EXECUTABLE")
-    candidates = []
-    if env_path:
-        candidates.append(Path(env_path))
-
-    if os.name == "nt":
-        candidates.extend([
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe",
-            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft/Edge/Application/msedge.exe",
-            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft/Edge/Application/msedge.exe",
-        ])
-
-    for candidate in candidates:
-        if candidate.exists():
-            options["executable_path"] = str(candidate)
-            logging.info(f"Using browser executable: {candidate}")
-            break
-
-    return options
-
-
-def build_output_filename(now: Optional[datetime.datetime] = None) -> str:
-    """Return the standard output CSV name using a 24-hour timestamp."""
+def build_output_filename(now: Optional[datetime.datetime] = None, suffix: str = ".xlsx") -> str:
+    """Return the standard output name using a 24-hour timestamp."""
     now = now or datetime.datetime.now()
     time_format = "%H%M" if os.name == "nt" else "%H:%M"
-    return f"{OUTPUT_FILE_PREFIX}_{now.strftime('%m%d%Y')}_{now.strftime(time_format)}.csv"
+    return f"{OUTPUT_FILE_PREFIX}_{now.strftime('%m%d%Y')}_{now.strftime(time_format)}{suffix}"
 
 
 def unique_output_path(out_dir: Path, filename: str) -> Path:
@@ -139,6 +149,107 @@ def unique_output_path(out_dir: Path, filename: str) -> Path:
         if not candidate.exists():
             return candidate
         counter += 1
+
+
+def parse_cli_date(value: str) -> str:
+    """Accept YYYY-MM-DD, YYYY/MM/DD, or MM/DD/YYYY and return MM/DD/YYYY."""
+    raw = value.replace("-", "/")
+    parts = raw.split("/")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid date value: {value}")
+    if len(parts[0]) == 4:
+        return f"{parts[1].zfill(2)}/{parts[2].zfill(2)}/{parts[0]}"
+    return f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2]}"
+
+
+def split_applicant_name(value) -> tuple:
+    """Split a display name into first/last using the best available convention."""
+    name = clean_text(value)
+    if not name:
+        return "", ""
+    if "," in name:
+        last, first = [part.strip() for part in name.split(",", 1)]
+        return first, last
+    parts = name.split()
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
+
+
+def clean_text(value) -> str:
+    """Return a safe text value without pandas missing-value strings."""
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def normalize_email(value) -> str:
+    """Normalize applicant email for V2 matching."""
+    return clean_text(value).lower()
+
+
+def normalize_date_value(value) -> str:
+    """Return dates as MM/DD/YYYY text, with blanks preserved as blanks."""
+    text = clean_text(value)
+    if not text:
+        return ""
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.isna(parsed):
+        logging.warning(f"Could not parse date value; leaving blank in import workbook: {text!r}")
+        return ""
+    return parsed.strftime("%m/%d/%Y")
+
+
+def date_sort_value(value):
+    """Parse dates for duplicate resolution; invalid/missing dates sort oldest."""
+    parsed = pd.to_datetime(clean_text(value), errors="coerce")
+    if pd.isna(parsed):
+        return pd.Timestamp.min
+    return parsed
+
+
+def calculate_nco_window(
+    today: Optional[datetime.date] = None,
+    anchor: datetime.date = BI_WEEKLY_ANCHOR,
+) -> dict:
+    """
+    Calculate the rolling three-NCO extraction window aligned to the NCO cadence.
+
+    The extraction starts at the previous/current NCO boundary and ends at the
+    third upcoming NCO date. This deliberately stays cadence-based instead of
+    using today + 42 days.
+    """
+    today = today or datetime.date.today()
+    days_since_anchor = (today - anchor).days
+    periods_since_anchor = days_since_anchor // BI_WEEKLY_DAYS
+    previous_nco = anchor + datetime.timedelta(days=periods_since_anchor * BI_WEEKLY_DAYS)
+    if previous_nco > today:
+        previous_nco -= datetime.timedelta(days=BI_WEEKLY_DAYS)
+
+    nco_1 = previous_nco + datetime.timedelta(days=BI_WEEKLY_DAYS)
+    nco_2 = nco_1 + datetime.timedelta(days=BI_WEEKLY_DAYS)
+    nco_3 = nco_1 + datetime.timedelta(days=BI_WEEKLY_DAYS * 2)
+
+    return {
+        "run_date": today,
+        "previous_nco": previous_nco,
+        "nco_1": nco_1,
+        "nco_2": nco_2,
+        "nco_3": nco_3,
+        "extraction_start": previous_nco,
+        "extraction_end": nco_3,
+    }
+
+
+def log_nco_window(window: dict) -> None:
+    """Log the V2 date-window details for auditability."""
+    logging.info("Run Date: %s", window["run_date"].strftime("%m/%d/%Y"))
+    logging.info("Previous NCO: %s", window["previous_nco"].strftime("%m/%d/%Y"))
+    logging.info("NCO #1: %s", window["nco_1"].strftime("%m/%d/%Y"))
+    logging.info("NCO #2: %s", window["nco_2"].strftime("%m/%d/%Y"))
+    logging.info("NCO #3: %s", window["nco_3"].strftime("%m/%d/%Y"))
+    logging.info("Extraction Start: %s", window["extraction_start"].strftime("%m/%d/%Y"))
+    logging.info("Extraction End: %s", window["extraction_end"].strftime("%m/%d/%Y"))
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +305,297 @@ def validate_csv_columns(filepath: Path, expected_columns):
         return False
     logging.info(f"✅ CSV contains expected layout columns")
     return True
+
+
+def _xlsx_shared_strings(zf: zipfile.ZipFile):
+    """Return shared-string table entries from an .xlsx package."""
+    try:
+        xml = zf.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+
+    ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    root = ET.fromstring(xml)
+    values = []
+    for item in root.findall("main:si", ns):
+        text_parts = [node.text or "" for node in item.findall(".//main:t", ns)]
+        values.append("".join(text_parts))
+    return values
+
+
+def _xlsx_first_sheet_path(zf: zipfile.ZipFile) -> str:
+    """Resolve the first worksheet path from workbook relationships."""
+    ns = {
+        "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "pkg": "http://schemas.openxmlformats.org/package/2006/relationships",
+    }
+
+    workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+    first_sheet = workbook.find("main:sheets/main:sheet", ns)
+    if first_sheet is None:
+        raise ValueError("No sheets found in workbook")
+
+    rel_id = first_sheet.attrib.get(f"{{{ns['rel']}}}id")
+    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    for rel in rels.findall("pkg:Relationship", ns):
+        if rel.attrib.get("Id") == rel_id:
+            target = rel.attrib["Target"]
+            if target.startswith("/"):
+                return target.lstrip("/")
+            return f"xl/{target}"
+
+    raise ValueError("First worksheet relationship not found")
+
+
+def _xlsx_first_row_values(filepath: Path):
+    """Read visible values from the first row of the first Excel worksheet."""
+    ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with zipfile.ZipFile(filepath) as zf:
+        shared_strings = _xlsx_shared_strings(zf)
+        sheet_path = _xlsx_first_sheet_path(zf)
+        sheet = ET.fromstring(zf.read(sheet_path))
+        first_row = sheet.find("main:sheetData/main:row", ns)
+        if first_row is None:
+            return []
+
+        values = []
+        for cell in first_row.findall("main:c", ns):
+            cell_type = cell.attrib.get("t")
+            value_node = cell.find("main:v", ns)
+            inline_node = cell.find("main:is/main:t", ns)
+
+            if cell_type == "s" and value_node is not None:
+                try:
+                    values.append(shared_strings[int(value_node.text or "0")])
+                except (IndexError, ValueError):
+                    values.append("")
+            elif inline_node is not None:
+                values.append(inline_node.text or "")
+            elif value_node is not None:
+                values.append(value_node.text or "")
+            else:
+                values.append("")
+
+    return [value.strip() for value in values]
+
+
+def validate_xlsx_file(filepath: Path) -> bool:
+    """Verify that the Excel workbook exists and can be opened as .xlsx."""
+    if not filepath.exists():
+        logging.warning(f"Excel file does not exist: {filepath}")
+        return False
+
+    file_size = filepath.stat().st_size
+    if file_size < MIN_XLSX_BYTES:
+        logging.warning(f"Excel file too small ({file_size} bytes): {filepath}")
+        return False
+
+    try:
+        with zipfile.ZipFile(filepath) as zf:
+            required = {"[Content_Types].xml", "xl/workbook.xml"}
+            missing = required.difference(zf.namelist())
+            if missing:
+                logging.warning(f"Excel file is missing required parts: {sorted(missing)}")
+                return False
+            _xlsx_first_sheet_path(zf)
+    except Exception as e:
+        logging.warning(f"Error reading Excel file: {e}")
+        return False
+
+    logging.info(f"✅ Excel validation passed ({file_size} bytes)")
+    return True
+
+
+def validate_xlsx_columns(filepath: Path, expected_columns):
+    """Ensure the first Excel row contains the expected Current Layout columns."""
+    try:
+        cols = _xlsx_first_row_values(filepath)
+        if not cols:
+            logging.warning(f"Excel header row is empty: {filepath}")
+            return False
+        missing = [c for c in expected_columns if c not in cols]
+        if missing:
+            logging.warning(f"Missing expected Excel columns: {missing}")
+            logging.warning(f"Found columns: {cols}")
+            return False
+    except Exception as e:
+        logging.warning(f"Error validating Excel columns: {e}")
+        return False
+
+    logging.info("✅ Excel contains expected layout columns")
+    return True
+
+
+def load_symplr_export(filepath: Path) -> pd.DataFrame:
+    """Load the raw Symplr export into a DataFrame."""
+    suffix = filepath.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(filepath, dtype=str, keep_default_na=False)
+    if suffix in (".xlsx", ".xlsm", ".xls"):
+        return pd.read_excel(filepath, dtype=str, keep_default_na=False)
+    raise ValueError(f"Unsupported Symplr export file type: {filepath}")
+
+
+def validate_required_columns(df: pd.DataFrame, required_columns) -> None:
+    """Fail clearly if Symplr changes/removes a required source column."""
+    found = {str(column).strip() for column in df.columns}
+    missing = [column for column in required_columns if column not in found]
+    if missing:
+        raise RuntimeError(
+            "Downloaded Symplr file is missing required source columns: "
+            f"{missing}. Found columns: {list(df.columns)}"
+        )
+
+
+def normalize_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize the required date columns used by Power Automate."""
+    result = df.copy()
+    result["_StartDateSort"] = result[SOURCE_START_DATE_COLUMN].apply(date_sort_value)
+    result["_OrientationDateSort"] = result[SOURCE_ORIENTATION_DATE_COLUMN].apply(date_sort_value)
+    result["_HiredDateSort"] = result[SOURCE_HIRED_DATE_COLUMN].apply(date_sort_value)
+    result["Start date"] = result[SOURCE_START_DATE_COLUMN].apply(normalize_date_value)
+    result["NCO date"] = result[SOURCE_ORIENTATION_DATE_COLUMN].apply(normalize_date_value)
+    result["Hired Date"] = result[SOURCE_HIRED_DATE_COLUMN].apply(normalize_date_value)
+    return result
+
+
+def resolve_duplicate_applicants(df: pd.DataFrame) -> tuple:
+    """
+    Return one row per normalized email using the best deterministic source data.
+
+    The current Symplr export only exposes Start Date, Orientation 1 Date, and
+    Hired Date as ordering fields. We keep the row with the latest Start Date,
+    then latest Orientation Date, then latest Hired Date, then latest export row.
+    """
+    duplicate_mask = df.duplicated("_NormalizedEmail", keep=False)
+    duplicate_rows = df.loc[duplicate_mask].copy()
+    duplicate_email_count = duplicate_rows["_NormalizedEmail"].nunique()
+
+    if duplicate_email_count:
+        logging.warning("Duplicate applicant emails detected: %s", duplicate_email_count)
+        for email, group in duplicate_rows.groupby("_NormalizedEmail", sort=True):
+            logging.warning("Duplicate email %s has %s rows in Symplr export", email, len(group))
+
+    sorted_df = df.sort_values(
+        by=["_NormalizedEmail", "_StartDateSort", "_OrientationDateSort", "_HiredDateSort", "_SourceRow"],
+        ascending=[True, True, True, True, True],
+        kind="mergesort",
+    )
+    resolved = sorted_df.drop_duplicates("_NormalizedEmail", keep="last").copy()
+
+    if duplicate_email_count:
+        logging.warning(
+            "Duplicate resolution rule: latest Start Date, then latest Orientation Date, "
+            "then latest Hired Date, then latest row order from the Symplr export."
+        )
+        for email, group in duplicate_rows.groupby("_NormalizedEmail", sort=True):
+            kept = resolved.loc[resolved["_NormalizedEmail"] == email].iloc[0]
+            logging.warning(
+                "Kept duplicate email %s from source row %s with Start date=%s, NCO date=%s, Hired Date=%s",
+                email,
+                int(kept["_SourceRow"]),
+                kept["Start date"],
+                kept["NCO date"],
+                kept["Hired Date"],
+            )
+
+    return resolved, duplicate_email_count
+
+
+def transform_symplr_data(raw_df: pd.DataFrame) -> tuple:
+    """Validate, clean, de-duplicate, and shape Symplr data for Power Automate."""
+    validate_required_columns(raw_df, V2_REQUIRED_SOURCE_COLUMNS)
+
+    total_rows = len(raw_df)
+    df = raw_df.dropna(how="all").copy()
+    for column in df.columns:
+        df[column] = df[column].apply(clean_text)
+    df = df.loc[~df.apply(lambda row: all(value == "" for value in row), axis=1)].copy()
+    rows_after_empty_removed = len(df)
+
+    df["_SourceRow"] = range(2, len(df) + 2)
+    df["_NormalizedEmail"] = df[SOURCE_EMAIL_COLUMN].apply(normalize_email)
+
+    blank_email_mask = df["_NormalizedEmail"] == ""
+    blank_email_rows = int(blank_email_mask.sum())
+    if blank_email_rows:
+        rejected_rows = df.loc[blank_email_mask, "_SourceRow"].tolist()
+        logging.warning("Rejected %s rows with blank applicant email. Source rows: %s", blank_email_rows, rejected_rows)
+    df = df.loc[~blank_email_mask].copy()
+
+    df = normalize_dates(df)
+    resolved, duplicate_email_count = resolve_duplicate_applicants(df)
+
+    output = pd.DataFrame({
+        "Applicant Name": resolved["Applicant Name"].apply(clean_text),
+        "Email": resolved["_NormalizedEmail"],
+        "Job Title": resolved["Job Title"].apply(clean_text),
+        "Job Code": resolved["Job Code"].apply(clean_text),
+        "Hired Date": resolved["Hired Date"],
+        "Start date": resolved["Start date"],
+        "Phone": resolved["Phone"].apply(clean_text),
+        "Recruiter": resolved["Recruiter"].apply(clean_text),
+        "Hiring Manager": resolved["Hiring Manager"].apply(clean_text),
+        "Account": resolved["Account"].apply(clean_text),
+        "Facility": resolved["Facility"].apply(clean_text),
+        "Facility Code": resolved["Facility Code"].apply(clean_text),
+        "Department": resolved["Department"].apply(clean_text),
+        "Department Code": resolved["Department Code"].apply(clean_text),
+        "NCO date": resolved["NCO date"],
+    })
+    output = output.reindex(columns=IMPORT_COLUMNS).fillna("")
+
+    stats = {
+        "total_rows_downloaded": total_rows,
+        "rows_after_empty_removed": rows_after_empty_removed,
+        "blank_email_rows_rejected": blank_email_rows,
+        "duplicate_emails_detected": duplicate_email_count,
+        "total_unique_applicants_exported": len(output),
+    }
+    return output, stats
+
+
+def create_excel_import(import_df: pd.DataFrame, out_dir: Path) -> Path:
+    """Write the Power Automate import workbook with a real Excel table."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / IMPORT_WORKBOOK_NAME
+
+    with pd.ExcelWriter(dest, engine="openpyxl") as writer:
+        import_df.to_excel(writer, sheet_name=IMPORT_WORKSHEET_NAME, index=False)
+
+    wb = load_workbook(dest)
+    ws = wb[IMPORT_WORKSHEET_NAME]
+    max_row = max(ws.max_row, 1)
+    max_col = ws.max_column
+    table_ref = f"A1:{ws.cell(row=max_row, column=max_col).coordinate}"
+    table = Table(displayName=IMPORT_TABLE_NAME, ref=table_ref)
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(table)
+    wb.save(dest)
+    return dest
+
+
+def process_download_for_v2(download_path: Path, out_dir: Path) -> Path:
+    """Create the final SharePoint-ready import workbook from the raw download."""
+    raw_df = load_symplr_export(download_path)
+    import_df, stats = transform_symplr_data(raw_df)
+    import_path = create_excel_import(import_df, out_dir)
+
+    logging.info("Total rows downloaded: %s", stats["total_rows_downloaded"])
+    logging.info("Total valid rows: %s", stats["rows_after_empty_removed"] - stats["blank_email_rows_rejected"])
+    logging.info("Blank-email rows rejected: %s", stats["blank_email_rows_rejected"])
+    logging.info("Duplicate emails detected: %s", stats["duplicate_emails_detected"])
+    logging.info("Total unique applicants exported: %s", stats["total_unique_applicants_exported"])
+    logging.info("Excel output file location: %s", import_path)
+    print(f"    Import workbook : {import_path}")
+    return import_path
 
 
 def extract_table_and_save(page, out_dir: Path, start_date: str):
@@ -254,7 +656,7 @@ def extract_table_and_save(page, out_dir: Path, start_date: str):
         if len(r) < max_cols:
             norm_rows[i] = r + [''] * (max_cols - len(r))
 
-    dest = unique_output_path(out_dir, build_output_filename())
+    dest = unique_output_path(out_dir, build_output_filename(suffix=".csv"))
 
     with open(dest, 'w', encoding='utf-8', newline='') as fh:
         writer = csv.writer(fh)
@@ -402,23 +804,23 @@ def dismiss_unexpected_modal(page, timeout_ms: int = 1000) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Click the CSV option from the InfiniteTable body-level portal
+# Click an export format option from the InfiniteTable body-level portal
 # ---------------------------------------------------------------------------
-def click_csv_in_portal(page) -> bool:
+def click_format_in_portal(page, option_text: str) -> bool:
     """
     The format dropdown renders its options in a body-level portal (InfiniteTable).
-    We scan all .InfiniteCell_content_value elements for 'CSV' text and click it.
+    We scan all .InfiniteCell_content_value elements for the requested text and click it.
     Returns True on success.
     """
     try:
         page.wait_for_selector(".InfiniteCell_content_value", timeout=5000)
         cells = page.query_selector_all(".InfiniteCell_content_value")
         for cell in cells:
-            if "CSV" in (cell.inner_text() or ""):
+            if option_text.lower() == (cell.inner_text() or "").strip().lower():
                 cell.click()
-                print("  ✅  CSV option clicked")
+                print(f"  ✅  {option_text} option clicked")
                 return True
-        print("  ⚠️   CSV cell not found in portal — cells found:", [c.inner_text() for c in cells])
+        print(f"  ⚠️   {option_text} cell not found in portal — cells found:", [c.inner_text() for c in cells])
         return False
     except PWTimeout:
         print("  ⚠️   InfiniteCell portal never appeared")
@@ -614,7 +1016,7 @@ def dump_export_debug(page, out_dir: Path, label: str):
                         }
                     };
                 })
-                .filter(item => /Download|Clipboard|Export Report|CSV|Current Layout/i.test(
+                .filter(item => /Download|Clipboard|Export Report|Excel|CSV|Current Layout/i.test(
                     [item.text, item.dataName, item.ariaLabel, item.className].filter(Boolean).join(' ')
                 ));
         }
@@ -632,7 +1034,7 @@ def click_dropdown_option_near(page, label: str, anchor_locator) -> bool:
     Symplr/Adaptable renders the menu outside the report row, so row-scoped
     locators cannot see the Download option after the dropdown opens.
     """
-    anchor = anchor_locator.bounding_box()
+    anchor = anchor_locator if isinstance(anchor_locator, dict) else anchor_locator.bounding_box()
     if not anchor:
         raise RuntimeError("Could not locate Export Report dropdown button")
 
@@ -731,6 +1133,132 @@ def click_dropdown_option_near(page, label: str, anchor_locator) -> bool:
     return True
 
 
+def open_current_layout_export_dropdown(page, current_layout_row, format_select):
+    """Open the Current Layout export dropdown and return its anchor bounding box."""
+    anchor = page.evaluate("""
+    () => {
+        const visible = el => {
+            const style = window.getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return style.display !== 'none' &&
+                   style.visibility !== 'hidden' &&
+                   box.width > 0 &&
+                   box.height > 0;
+        };
+
+        const buttons = [...document.querySelectorAll("button[data-name='export'][aria-label='Export Report']")];
+        for (const button of buttons) {
+            const row = button.closest("li[data-name='adaptable-object-list-item']");
+            if (!row || !visible(button) || !row.textContent.includes("Current Layout")) {
+                continue;
+            }
+
+            const box = button.getBoundingClientRect();
+            return {x: box.x, y: box.y, width: box.width, height: box.height};
+        }
+
+        return null;
+    }
+    """)
+    if anchor:
+        page.mouse.click(anchor["x"] + anchor["width"] / 2, anchor["y"] + anchor["height"] / 2)
+        print(
+            "  ✅  Clicked Export Report button "
+            f"at ({anchor['x']:.0f}, {anchor['y']:.0f})"
+        )
+        return anchor
+
+    selectors = [
+        "button[data-name='export'][aria-label='Export Report']",
+        "[data-name='export'][aria-label='Export Report']",
+        "button[data-name='report-export-selector']",
+        "[data-name='report-export-selector']",
+        ".ab-ToolPanel__Export__export-button",
+        ".ab-ToolPanel__Export__export",
+        "[aria-label*='Export']",
+        "[title*='Export']",
+    ]
+
+    for selector in selectors:
+        locator = current_layout_row.locator(selector).first
+        try:
+            if locator.count() and locator.is_visible() and locator.is_enabled():
+                locator.click(force=True)
+                bbox = locator.bounding_box()
+                if bbox:
+                    return bbox
+        except Exception:
+            continue
+
+    anchor = page.evaluate("""
+    () => {
+        const visible = el => {
+            const style = window.getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return style.display !== 'none' &&
+                   style.visibility !== 'hidden' &&
+                   box.width > 0 &&
+                   box.height > 0;
+        };
+
+        const rows = [...document.querySelectorAll("li[data-name='adaptable-object-list-item']")]
+            .filter(visible);
+        const row = rows.find(el => /Current Layout/.test(el.textContent || ''));
+        if (!row) return null;
+
+        const button = [...row.querySelectorAll("button, [role='button'], [data-name='export']")]
+            .find(el =>
+                visible(el) &&
+                el.getAttribute('data-name') === 'export' &&
+                /Export Report/i.test(el.getAttribute('aria-label') || '') &&
+                !String(el.className || '').includes('--disabled')
+            );
+        if (!button) return null;
+
+        const box = button.getBoundingClientRect();
+        button.click();
+        return {x: box.x, y: box.y, width: box.width, height: box.height};
+    }
+    """)
+    if anchor:
+        return anchor
+
+    format_box = format_select.bounding_box()
+    if not format_box:
+        raise RuntimeError("Could not locate Excel format field for export dropdown fallback")
+
+    # The export icon sits immediately to the right of the selected format field.
+    anchor = {
+        "x": format_box["x"] + format_box["width"] + 12,
+        "y": format_box["y"],
+        "width": 28,
+        "height": format_box["height"],
+    }
+    page.mouse.click(anchor["x"] + anchor["width"] / 2, anchor["y"] + anchor["height"] / 2)
+    return anchor
+
+
+def launch_browser_with_fallback(pw, headless: bool):
+    """Launch Playwright Chromium, falling back to installed Edge/Chrome on Windows."""
+    launch_options = {"headless": headless, "slow_mo": 80}
+    try:
+        return pw.chromium.launch(**launch_options)
+    except Exception as default_error:
+        if os.name != "nt":
+            raise
+
+        for channel in ("msedge", "chrome"):
+            try:
+                logging.warning(
+                    f"Bundled Playwright browser unavailable; trying installed {channel}."
+                )
+                return pw.chromium.launch(channel=channel, **launch_options)
+            except Exception as channel_error:
+                logging.warning(f"Installed {channel} launch failed: {channel_error}")
+
+        raise default_error
+
+
 # ---------------------------------------------------------------------------
 # Main automation
 # ---------------------------------------------------------------------------
@@ -743,17 +1271,21 @@ def run(username: str, password: str, start_date: str, end_date: str,
     print(f"    Output dir : {out_dir}")
     print(f"    Headless   : {headless}\n")
 
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(**browser_launch_options(headless))
-    ctx = browser.new_context(
-        accept_downloads=True,
-        viewport={'width': 1280, 'height': 720}
-    )
-    page = ctx.new_page()
-    page.on("dialog", lambda dialog: dialog.dismiss())
-    page.set_default_timeout(int(60_000 * TIMEOUT_BUFFER))  # Add timeout buffer
-
+    pw = None
+    browser = None
+    ctx = None
+    page = None
     try:
+        pw = sync_playwright().start()
+        browser = launch_browser_with_fallback(pw, headless)
+        ctx = browser.new_context(
+            accept_downloads=True,
+            viewport={'width': 1280, 'height': 720}
+        )
+        page = ctx.new_page()
+        page.on("dialog", lambda dialog: dialog.dismiss())
+        page.set_default_timeout(int(60_000 * TIMEOUT_BUFFER))  # Add timeout buffer
+
         print("Step 1: Logging in …")
         page.goto(LOGIN_URL)
         page.wait_for_load_state("networkidle")
@@ -763,7 +1295,6 @@ def run(username: str, password: str, start_date: str, end_date: str,
         page.fill("input[type='password']", password)
         page.click("button:has-text('Log In')")
         page.wait_for_timeout(3_000)
-        dismiss_unexpected_modal(page, timeout_ms=5_000)
         
         # Wait for authentication spinner to disappear (shows "Authenticating...")
         try:
@@ -772,11 +1303,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
         except PWTimeout:
             pass
         
-        dismiss_unexpected_modal(page, timeout_ms=5_000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
-        except PWTimeout:
-            logging.info("Post-login networkidle timed out; continuing after modal cleanup")
+        page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
         page.wait_for_timeout(2_000)
         dismiss_unexpected_modal(page)
         shot(page, "02_post_login", out_dir)
@@ -880,7 +1407,7 @@ def run(username: str, password: str, start_date: str, end_date: str,
             if not validate_csv_columns(dest, EXPECTED_LAYOUT_COLUMNS):
                 raise RuntimeError(
                     f"DOM-exported CSV is missing expected layout fields: {dest}. "
-                    "Use the default export path to get the full Current Layout CSV."
+                    "Use the default export path to get the full Current Layout Excel workbook."
                 )
             return dest
         # ── 7. Collapse filter panel (optional, cleans viewport) ──────────
@@ -899,8 +1426,8 @@ def run(username: str, password: str, start_date: str, end_date: str,
         shot(page, "08_export_panel", out_dir)
         print("  ✅  Export panel opened\n")
 
-        # ── 9. Select CSV format ──────────────────────────────────────────
-        print("Step 8: Selecting CSV format …")
+        # ── 9. Select Excel format ────────────────────────────────────────
+        print(f"Step 8: Selecting {EXPORT_FORMAT} format …")
         # Scope to the first report row: Report > Current Layout.
         page.wait_for_timeout(1_500)
         current_layout_row = current_layout_export_row(page)
@@ -911,55 +1438,59 @@ def run(username: str, password: str, start_date: str, end_date: str,
         page.wait_for_timeout(1_500)
         shot(page, "09_format_dropdown", out_dir)
 
-        if not click_csv_in_portal(page):
-            shot(page, "ERROR_csv_not_found", out_dir)
-            sys.exit("❌  Could not find CSV option in portal dropdown")
+        if not click_format_in_portal(page, EXPORT_FORMAT):
+            shot(page, "ERROR_excel_not_found", out_dir)
+            sys.exit(f"❌  Could not find {EXPORT_FORMAT} option in portal dropdown")
 
         page.wait_for_timeout(2_000)
-        shot(page, "10_csv_selected", out_dir)
-        print("  ✅  CSV selected\n")
+        shot(page, "10_excel_selected", out_dir)
+        print(f"  ✅  {EXPORT_FORMAT} selected\n")
 
         # ── 10. Open first-row Export Report dropdown, then click Download ─
         print("Step 9: Triggering download …")
         page.wait_for_timeout(2_000)
 
         shot(page, "11_before_download", out_dir)
-        current_layout_row = current_layout_export_row(page)
-        export_dropdown_btn = current_layout_row.locator("button[data-name='report-export-selector']").first
-        export_dropdown_btn.wait_for(state="visible", timeout=10_000)
 
-        print("  📥 Opening first row Export Report dropdown")
-        export_dropdown_btn.click(force=True)
-        bbox = export_dropdown_btn.bounding_box()
-        if bbox:
-            page.mouse.move(
-                bbox["x"] + (bbox["width"] / 2),
-                bbox["y"] + bbox["height"] + 20,
-            )
-        page.wait_for_timeout(800)
-        shot(page, "11_download_submenu", out_dir)
-
+        download = None
+        bbox = None
         try:
-            with page.expect_download(timeout=LONG_TIMEOUT) as dl_info:
-                print("  📥 Clicking Download")
-                click_dropdown_option_near(page, "Download", export_dropdown_btn)
+            with page.expect_download(timeout=SHORT_TIMEOUT) as dl_info:
+                print("  📥 Clicking Export Report")
+                bbox = open_current_layout_export_dropdown(page, current_layout_row, format_select)
+            download = dl_info.value
         except PWTimeout:
-            shot(page, "ERROR_download_timeout", out_dir)
-            dump_export_debug(page, out_dir, "ERROR_download_candidates")
+            if bbox:
+                page.mouse.move(
+                    bbox["x"] + (bbox["width"] / 2),
+                    bbox["y"] + bbox["height"] + 20,
+                )
+            page.wait_for_timeout(800)
+            shot(page, "11_download_submenu", out_dir)
+
+            try:
+                with page.expect_download(timeout=LONG_TIMEOUT) as dl_info:
+                    print("  📥 Clicking Download")
+                    click_dropdown_option_near(page, "Download", bbox)
+                download = dl_info.value
+            except PWTimeout:
+                shot(page, "ERROR_download_timeout", out_dir)
+                dump_export_debug(page, out_dir, "ERROR_download_candidates")
+                raise
+        except Exception:
+            dump_export_debug(page, out_dir, "ERROR_export_button_candidates")
             raise
 
-        download = dl_info.value
-
-        dest = unique_output_path(out_dir, build_output_filename())
+        dest = unique_output_path(out_dir, build_output_filename(suffix=".xlsx"))
         download.save_as(str(dest))
 
         shot(page, "12_download_complete", out_dir)
         
-        # Validate the downloaded CSV
-        if not validate_csv_file(dest):
-            raise RuntimeError(f"CSV validation failed: {dest}")
-        if not validate_csv_columns(dest, EXPECTED_LAYOUT_COLUMNS):
-            raise RuntimeError(f"Downloaded CSV is missing expected layout fields: {dest}")
+        # Validate the downloaded Excel workbook
+        if not validate_xlsx_file(dest):
+            raise RuntimeError(f"Excel validation failed: {dest}")
+        if not validate_xlsx_columns(dest, EXPECTED_LAYOUT_COLUMNS):
+            raise RuntimeError(f"Downloaded Excel is missing expected layout fields: {dest}")
 
         print(f"\n✅  Download complete!")
         print(f"    File : {dest}")
@@ -978,20 +1509,25 @@ def run(username: str, password: str, start_date: str, end_date: str,
     finally:
         # Ensure browser and playwright are closed
         try:
+            if ctx:
+                ctx.close()
+        except:
+            pass
+        try:
             if browser:
                 browser.close()
         except:
             pass
         try:
-            if 'pw' in locals():
+            if pw:
                 pw.stop()
         except:
             pass
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Download UAFCompare1 CSV from Symplr Recruiting")
-    parser.add_argument("--start",    help="Start date MM/DD/YYYY  (default: next bi-weekly)")
-    parser.add_argument("--end",      help="End date   MM/DD/YYYY  (default: same as start)")
+    parser = argparse.ArgumentParser(description="Download UAFCompare1 Excel workbook from Symplr Recruiting")
+    parser.add_argument("--start",    help="Start date MM/DD/YYYY  (default: previous/current NCO boundary)")
+    parser.add_argument("--end",      help="End date   MM/DD/YYYY  (default: third upcoming NCO)")
     parser.add_argument("--headless", action="store_true", help="Run without visible browser")
     parser.add_argument("--quiet",    action="store_true", help="Minimal output (for scheduled runs)")
     parser.add_argument("--out",      help="Output directory (default: ~/Downloads/Symplr)")
@@ -1000,7 +1536,6 @@ def main():
 
     # ── Configure logging based on quiet mode ──────────────────────────────
     if args.quiet:
-        logging.getLogger().setLevel(logging.WARNING)
         for handler in logging.root.handlers:
             if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
                 handler.setLevel(logging.WARNING)
@@ -1012,22 +1547,20 @@ def main():
         sys.exit("❌  Set HIRE_USER and HIRE_PASS environment variables")
 
     # ── Dates ─────────────────────────────────────────────────────────────
-    if args.start:
-        # accept YYYY-MM-DD or MM/DD/YYYY
-        raw = args.start.replace("-", "/")
-        parts = raw.split("/")
-        if len(parts[0]) == 4:                    # YYYY/MM/DD
-            start_date = f"{parts[1]}/{parts[2]}/{parts[0]}"
-        else:
-            start_date = raw
+    if args.start or args.end:
+        if not args.start:
+            raise SystemExit("❌  --start is required when --end is supplied")
+        start_date = parse_cli_date(args.start)
+        end_date = parse_cli_date(args.end) if args.end else start_date
+        logging.info("Using manually supplied extraction window")
+        logging.info("Run Date: %s", datetime.date.today().strftime("%m/%d/%Y"))
+        logging.info("Extraction Start: %s", start_date)
+        logging.info("Extraction End: %s", end_date)
     else:
-        d = next_biweekly_date()
-        start_date = d.strftime("%m/%d/%Y")
-
-    end_date = args.end.replace("-", "/") if args.end else start_date
-    if len(end_date.split("/")[0]) == 4:
-        p = end_date.split("/")
-        end_date = f"{p[1]}/{p[2]}/{p[0]}"
+        nco_window = calculate_nco_window()
+        log_nco_window(nco_window)
+        start_date = nco_window["extraction_start"].strftime("%m/%d/%Y")
+        end_date = nco_window["extraction_end"].strftime("%m/%d/%Y")
 
     # ── Output dir ────────────────────────────────────────────────────────
     out_dir_raw = args.out or os.environ.get("DOWNLOAD_DIR", "~/Downloads/Symplr")
@@ -1037,7 +1570,8 @@ def main():
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logging.info(f"Attempt {attempt}/{MAX_RETRIES}")
-            result = run(username, password, start_date, end_date, args.headless, out_dir, dom_export=args.dom)
+            raw_download = run(username, password, start_date, end_date, args.headless, out_dir, dom_export=args.dom)
+            result = process_download_for_v2(raw_download, out_dir)
             if args.quiet:
                 print(result)  # Print filepath even in quiet mode
             logging.info(f"✅ Success on attempt {attempt}")

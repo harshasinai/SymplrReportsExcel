@@ -1,5 +1,25 @@
 # Hire Report Automation - Windows VM
 
+## Symplr V2 Import
+
+The current architecture is:
+
+Symplr -> Python download -> pandas validation/transformation -> Excel output -> Power Automate -> SharePoint SymplrHiresList
+
+Python does not connect directly to SharePoint, Microsoft Graph, or Entra App Registration. Power Automate owns all SharePoint create/update/skip behavior.
+
+The Python script creates:
+
+- Workbook: `Symplr_Import.xlsx`
+- Worksheet: `SymplrData`
+- Excel table: `tblSymplrImport`
+
+Power Automate should read `tblSymplrImport` and use `Email` as the only unique applicant key. If the email exists and both `Start date` and `NCO date` match SharePoint, skip it. If either date differs, update the existing SharePoint item with both latest dates.
+
+The import workbook contains only Symplr-owned SharePoint fields: `Applicant Name`, `Email`, `Job Title`, `Job Code`, `Hired Date`, `Start date`, `Phone`, `Recruiter`, `Hiring Manager`, `Account`, `Facility`, `Facility Code`, `Department`, `Department Code`, and `NCO date`. HR/process fields such as caregiver type, employee number, clearances, compliance notes, UAF links, and hiring manager email are intentionally excluded from the import workbook.
+
+The default daily extraction window is aligned to the 14-day NCO cadence. Each run starts at the previous/current NCO boundary and ends at the third upcoming NCO date, giving the current, next, and following NCO populations in one workbook.
+
 This project automates downloading hire reports from Symplr Recruiting using Playwright and runs on a Windows VM with Task Scheduler.
 
 ## Features

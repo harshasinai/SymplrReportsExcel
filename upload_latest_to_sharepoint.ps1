@@ -6,12 +6,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$latest = Get-ChildItem -LiteralPath $DownloadDir -Filter "SymplrHireList_*.csv" |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+$latest = Get-Item -LiteralPath (Join-Path $DownloadDir "Symplr_Import.xlsx") -ErrorAction SilentlyContinue
 
 if (-not $latest) {
-    throw "No SymplrHireList CSV found in $DownloadDir"
+    throw "Symplr_Import.xlsx not found in $DownloadDir"
 }
 
 if ($SyncDir) {

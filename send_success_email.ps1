@@ -25,26 +25,24 @@ if (-not $SmtpServer) {
     throw "SMTP_SERVER is required."
 }
 
-$latest = Get-ChildItem -LiteralPath $DownloadDir -Filter "SymplrHireList_*.csv" |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+$latest = Get-Item -LiteralPath (Join-Path $DownloadDir "Symplr_Import.xlsx") -ErrorAction SilentlyContinue
 
 if (-not $latest) {
-    throw "No SymplrHireList CSV found in $DownloadDir"
+    throw "Symplr_Import.xlsx not found in $DownloadDir"
 }
 
 $computer = $env:COMPUTERNAME
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$subject = "Symplr hire report completed - $($latest.Name)"
+$subject = "Symplr hire import completed - $($latest.Name)"
 $sharePointText = if ($SharePointDir) { $SharePointDir } else { "Not configured" }
 
 $body = @"
-Symplr hire report completed successfully.
+Symplr hire import workbook completed successfully.
 
 Completed: $timestamp
 Machine: $computer
-CSV file: $($latest.FullName)
-CSV size: $([math]::Round($latest.Length / 1KB, 1)) KB
+Excel file: $($latest.FullName)
+Excel size: $([math]::Round($latest.Length / 1KB, 1)) KB
 SharePoint sync folder: $sharePointText
 
 This is an automated notification from the scheduled Symplr hire report task.
