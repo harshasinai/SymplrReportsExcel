@@ -544,7 +544,7 @@ def transform_symplr_data(raw_df: pd.DataFrame) -> tuple:
         "Department Code": resolved["Department Code"].apply(clean_text),
         "NCO date": resolved["NCO date"],
     })
-    output = output.reindex(columns=IMPORT_COLUMNS).fillna("")
+    output = output.reindex(columns=IMPORT_COLUMNS).fillna("").reset_index(drop=True)
 
     stats = {
         "total_rows_downloaded": total_rows,
