@@ -1287,8 +1287,13 @@ def run(username: str, password: str, start_date: str, end_date: str,
         page.set_default_timeout(int(60_000 * TIMEOUT_BUFFER))  # Add timeout buffer
 
         print("Step 1: Logging in …")
-        page.goto(LOGIN_URL)
-        page.wait_for_load_state("networkidle")
+        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=NETWORK_TIMEOUT)
+        try:
+            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        except PWTimeout:
+            logging.warning("Login page did not reach networkidle; continuing after form is visible")
+        page.wait_for_selector("input[type='text']", timeout=SHORT_TIMEOUT)
+        page.wait_for_selector("input[type='password']", timeout=SHORT_TIMEOUT)
         shot(page, "01_login_page", out_dir)
 
         page.fill("input[type='text']",     username)
@@ -1303,7 +1308,10 @@ def run(username: str, password: str, start_date: str, end_date: str,
         except PWTimeout:
             pass
         
-        page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        try:
+            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        except PWTimeout:
+            logging.warning("Post-login page did not reach networkidle; continuing after initial load")
         page.wait_for_timeout(2_000)
         dismiss_unexpected_modal(page)
         shot(page, "02_post_login", out_dir)
@@ -1315,9 +1323,12 @@ def run(username: str, password: str, start_date: str, end_date: str,
 
         # ── 2. Navigate to Reports ────────────────────────────────────────
         print("Step 2: Navigating to Reports …")
-        page.goto(REPORTS_URL)
+        page.goto(REPORTS_URL, wait_until="domcontentloaded", timeout=NETWORK_TIMEOUT)
         page.wait_for_timeout(4_000)
-        page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        try:
+            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+        except PWTimeout:
+            logging.warning("Reports page did not reach networkidle; continuing after initial load")
         dismiss_unexpected_modal(page)
         shot(page, "03_reports_page", out_dir)
         print("  ✅  Reports page loaded\n")
