@@ -67,7 +67,8 @@ logging.basicConfig(
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 except ImportError:
-    sys.exit("playwright not installed. Run: pip install playwright && playwright install chromium")
+    sync_playwright = None
+    PWTimeout = TimeoutError
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1264,6 +1265,9 @@ def launch_browser_with_fallback(pw, headless: bool):
 # ---------------------------------------------------------------------------
 def run(username: str, password: str, start_date: str, end_date: str,
     headless: bool, out_dir: Path, dom_export: bool = False):
+
+    if sync_playwright is None:
+        raise RuntimeError("playwright not installed. Run: pip install playwright && playwright install chromium")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n🚀  Starting Symplr UAFCompare1 download")
