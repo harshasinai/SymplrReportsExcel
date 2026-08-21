@@ -9,6 +9,7 @@ runtime-test/
 downloads/
 logs/
 test-output/
+wheelhouse-win/
 *.log
 
 # Backup files
