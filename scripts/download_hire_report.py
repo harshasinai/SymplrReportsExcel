@@ -216,9 +216,11 @@ def calculate_nco_window(
     """
     Calculate the rolling three-NCO extraction window aligned to the NCO cadence.
 
-    The extraction starts at the previous/current NCO boundary and ends at the
-    third upcoming NCO date. This deliberately stays cadence-based instead of
-    using today + 42 days.
+    The extraction starts on the current NCO date when run on an NCO date; after
+    that date passes, it starts the following day so the completed NCO class is
+    not re-exported for the rest of the cycle. It ends at the third upcoming
+    NCO date. This deliberately stays cadence-based instead of using today + 42
+    days.
     """
     today = today or datetime.date.today()
     days_since_anchor = (today - anchor).days
@@ -226,6 +228,10 @@ def calculate_nco_window(
     previous_nco = anchor + datetime.timedelta(days=periods_since_anchor * BI_WEEKLY_DAYS)
     if previous_nco > today:
         previous_nco -= datetime.timedelta(days=BI_WEEKLY_DAYS)
+
+    extraction_start = previous_nco
+    if today > previous_nco:
+        extraction_start = previous_nco + datetime.timedelta(days=1)
 
     nco_1 = previous_nco + datetime.timedelta(days=BI_WEEKLY_DAYS)
     nco_2 = nco_1 + datetime.timedelta(days=BI_WEEKLY_DAYS)
@@ -237,7 +243,7 @@ def calculate_nco_window(
         "nco_1": nco_1,
         "nco_2": nco_2,
         "nco_3": nco_3,
-        "extraction_start": previous_nco,
+        "extraction_start": extraction_start,
         "extraction_end": nco_3,
     }
 

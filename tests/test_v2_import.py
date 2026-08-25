@@ -27,12 +27,34 @@ class SymplrV2ImportTests(unittest.TestCase):
                     "nco_1": datetime.date(2026, 8, 31),
                     "nco_2": datetime.date(2026, 9, 14),
                     "nco_3": datetime.date(2026, 9, 28),
-                    "extraction_start": datetime.date(2026, 8, 17),
+                    "extraction_start": datetime.date(2026, 8, 18),
+                    "extraction_end": datetime.date(2026, 9, 28),
+                },
+            ),
+            (
+                datetime.date(2026, 8, 24),
+                {
+                    "previous_nco": datetime.date(2026, 8, 17),
+                    "nco_1": datetime.date(2026, 8, 31),
+                    "nco_2": datetime.date(2026, 9, 14),
+                    "nco_3": datetime.date(2026, 9, 28),
+                    "extraction_start": datetime.date(2026, 8, 18),
                     "extraction_end": datetime.date(2026, 9, 28),
                 },
             ),
             (
                 datetime.date(2026, 9, 2),
+                {
+                    "previous_nco": datetime.date(2026, 8, 31),
+                    "nco_1": datetime.date(2026, 9, 14),
+                    "nco_2": datetime.date(2026, 9, 28),
+                    "nco_3": datetime.date(2026, 10, 12),
+                    "extraction_start": datetime.date(2026, 9, 1),
+                    "extraction_end": datetime.date(2026, 10, 12),
+                },
+            ),
+            (
+                datetime.date(2026, 8, 31),
                 {
                     "previous_nco": datetime.date(2026, 8, 31),
                     "nco_1": datetime.date(2026, 9, 14),

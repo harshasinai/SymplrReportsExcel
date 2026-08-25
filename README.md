@@ -18,7 +18,7 @@ Power Automate should read `tblSymplrImport` and use `Email` as the only unique 
 
 The import workbook contains only Symplr-owned SharePoint fields: `Applicant Name`, `Email`, `Job Title`, `Job Code`, `Hired Date`, `Start date`, `Phone`, `Recruiter`, `Hiring Manager`, `Account`, `Facility`, `Facility Code`, `Department`, `Department Code`, and `NCO date`. HR/process fields such as caregiver type, employee number, clearances, compliance notes, UAF links, and hiring manager email are intentionally excluded from the import workbook.
 
-The default daily extraction window is aligned to the 14-day NCO cadence. Each run starts at the previous/current NCO boundary and ends at the third upcoming NCO date, giving the current, next, and following NCO populations in one workbook.
+The default daily extraction window is aligned to the 14-day NCO cadence. A run on an NCO date starts at that NCO date; after the NCO date has passed, the run starts the following day so the completed NCO class is not re-exported for the rest of the cycle. The window ends at the third upcoming NCO date, giving the upcoming NCO populations in one workbook.
 
 This project automates downloading hire reports from Symplr Recruiting using Playwright and runs on a Windows VM with Task Scheduler.
 
